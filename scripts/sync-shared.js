@@ -19,6 +19,7 @@ const FILES = [
   'config/rules.js',
   'config/planes.js',
   'config/items.js',
+  'config/social.js',
   'utils/board.js',
   'utils/plane.js',
   'utils/judge.js'

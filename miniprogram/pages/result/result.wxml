@@ -28,7 +28,18 @@
     </view>
   </view>
 
+  <!-- 最近对手（社交：一键再邀） -->
+  <view wx:if="{{rivalName}}" class="card rival-card">
+    <view class="rival-head">
+      <text class="rival-label">最近对手</text>
+      <text class="tag">{{rivalName}}</text>
+    </view>
+    <view class="muted">本地已记录 {{rivalTimes}} 位对手，再邀一局即可把房间分享给对方。</view>
+  </view>
+
   <button class="btn btn-primary" bindtap="onAgain">再来一局</button>
+  <button wx:if="{{rivalName}}" class="btn btn-outline" bindtap="onInvite">邀请好友再战</button>
+  <button class="btn btn-outline" open-type="share">分享战报</button>
   <button class="btn btn-outline" bindtap="onBackHome">返回大厅</button>
 
 </view>

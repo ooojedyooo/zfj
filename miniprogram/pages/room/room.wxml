@@ -1,5 +1,7 @@
 <view class="page-wrap">
 
+  <view wx:if="{{!isCloud}}" class="mode-tip">离线试玩模式 · 无需等待真人，对手由本地 AI 扮演</view>
+
   <!-- 创建房间 -->
   <block wx:if="{{mode === 'create'}}">
     <view class="card">
@@ -77,6 +79,7 @@
       <view class="loading-ring"></view>
       <view class="muted">超时将在 {{waitSeconds}} 秒后自动解散</view>
     </view>
+    <button class="btn btn-primary" open-type="share">邀请好友加入</button>
     <button class="btn btn-outline" bindtap="onCancel">取消</button>
   </block>
 

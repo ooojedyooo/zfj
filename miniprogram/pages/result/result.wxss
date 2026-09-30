@@ -34,3 +34,20 @@
 .row:last-child {
   border-bottom: none;
 }
+
+/* 最近对手 */
+.rival-card {
+  padding: 24rpx 32rpx;
+}
+
+.rival-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+
+.rival-label {
+  font-size: 28rpx;
+  font-weight: 600;
+}

@@ -2,11 +2,24 @@
   <view class="hero">
     <view class="logo">炸飞机</view>
     <view class="slogan">9×9 棋盘 · 双人实时对战</view>
+    <view wx:if="{{!isCloud}}" class="mode-tag">离线试玩模式 · 对手由本地 AI 扮演</view>
   </view>
 
   <button class="btn btn-primary" bindtap="onCreateRoom">创建房间</button>
   <button class="btn btn-outline" bindtap="onJoinRoom">加入房间</button>
   <button class="btn btn-outline" bindtap="onRandomMatch">随机匹配</button>
+
+  <!-- 最近对手 -->
+  <view wx:if="{{rivalName}}" class="card rival-card">
+    <view class="rival-row">
+      <view class="rival-info">
+        <text class="rival-label">最近对手</text>
+        <text class="rival-name">{{rivalName}}</text>
+        <text class="muted">本地共记录 {{rivalCount}} 位</text>
+      </view>
+      <view class="rival-btn" bindtap="onReinvite">再邀一局</view>
+    </view>
+  </view>
 
   <view class="rules-entry" bindtap="onRules">查看玩法规则</view>
 

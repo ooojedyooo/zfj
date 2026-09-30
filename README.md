@@ -31,31 +31,38 @@ zfj/
 │   ├── config/                   # 【数据驱动配置】新增内容不改核心代码
 │   │   ├── rules.js              #   游戏规则常量
 │   │   ├── planes.js             #   机型配置（形状 / 格数 / 机头下标）
-│   │   └── items.js              #   道具配置（V2 预留）
+│   │   ├── items.js              #   道具配置（V2 预留）
+│   │   ├── social.js             #   社交配置（表情白名单 / 最近对手数量）
+│   │   └── cloud.js              #   云环境 ID 与 USE_CLOUD 开关
 │   ├── utils/                    # 纯函数逻辑层（可单测）
 │   │   ├── board.js              #   棋盘与坐标工具
 │   │   ├── plane.js              #   飞机形状 / 旋转 / 碰撞 / 随机布阵
 │   │   └── judge.js              #   命中判定
 │   ├── services/
-│   │   └── localGame.js          # 本地对局引擎（调试用，后续替换为联机）
+│   │   ├── cloudApi.js           # ★ 对外统一数据接口（按 USE_CLOUD 分派）
+│   │   ├── cloudImpl.js          #   云端实现：云函数调用 + 实时监听
+│   │   ├── offlineGame.js        #   离线实现：本地对手 AI，签名与云端一致
+│   │   ├── localGame.js          #   本地对局引擎（offlineGame 的内核）
+│   │   └── rivals.js             #   最近对手本地存储
 │   ├── components/
 │   │   └── board-grid/           # 9×9 棋盘组件（双棋盘共用）
 │   └── pages/
-│       ├── index/                # 大厅
-│       ├── room/                 # 房间（创建 / 加入 / 匹配 / 等待）
+│       ├── index/                # 大厅（含最近对手入口）
+│       ├── room/                 # 房间（创建 / 加入 / 匹配 / 等待 / 邀战分享）
 │       ├── deploy/               # 布阵
-│       ├── battle/               # 对战（上下双棋盘）
-│       └── result/               # 结算
+│       ├── battle/               # 对战（上下双棋盘 + 快捷表情）
+│       └── result/               # 结算（战报分享 / 邀请再战）
 ├── cloudfunctions/               # 云函数（微信云开发）
 │   ├── room/                     #   建房 / 加入 / 随机匹配 / 退出
-│   ├── game/                     #   布阵校验 / 开火判定 / 投降 / 回合超时
+│   ├── game/                     #   布阵校验 / 开火判定 / 投降 / 回合超时 / 快捷表情
 │   │   └── shared/               #   由 scripts/sync-shared.js 同步的共用逻辑
 │   └── cleanup/                  #   定时清理超时房间
 ├── docs/                         # 产品文档
 │   ├── 炸飞机_PRD_v1.1.html
 │   └── 云开发部署说明.md
 ├── scripts/
-│   ├── test-core.js              # 核心玩法逻辑自测
+│   ├── test-core.js              # 核心玩法逻辑自测（纯函数）
+│   ├── test-offline-flow.js      # 离线全流程集成测试（状态机）
 │   └── sync-shared.js            # 同步共用逻辑到云函数目录
 └── project.config.json
 ```
@@ -92,17 +99,45 @@ zfj/
 |---|---|
 | 击毁不揭示形状（T-08） | `judge.js` 只返回命中结果，绝不下发飞机完整格位 |
 | 已攻击格不可重复选中（T-04） | `board-grid` 组件 `disabledMap` 置灰 + 服务端二次校验 |
-| 严格交替 | `localGame.js` 中 `fire()` 后立即换手 |
+| 严格交替 | `localGame.js` 中 `fire()` 后立即换手，云端 `game.fire` 同步换手 |
 | 布阵超时兜底（T-03） | `plane.js` 的 `randomDeploy()` |
+| 表情内容安全 | `config/social.js` 白名单，客户端渲染与云端校验同源 |
+
+### 4. 一套接口，两种数据源
+
+页面只 `require('services/cloudApi')`，拿到的方法在任何模式下都一样：
+
+```
+                 ┌─ USE_CLOUD = true  → services/cloudImpl.js    （云函数 + 云数据库 watch）
+cloudApi.js ────┤
+                 └─ USE_CLOUD = false → services/offlineGame.js （本地对手 AI + 本地事件广播）
+```
+
+好处：
+
+- **云环境没配好也能把游戏完整玩一遍**，验证玩法与交互
+- 切换数据源只改 `config/cloud.js` 一个开关，页面代码零改动
+- 离线引擎也是纯逻辑，可用 Node 跑全流程集成测试（见 `scripts/test-offline-flow.js`）
 
 ---
 
 ## 本地运行
 
-### 方式一：接入云开发（真实双人对战，推荐）
+### 方式一：离线试玩（当前默认，免配置）
 
-1. 用**微信开发者工具**导入本目录
-2. 把 `project.config.json` 的 `appid` 换成自己的小程序 AppID
+`miniprogram/config/cloud.js` 里 `USE_CLOUD: false`，用微信开发者工具直接导入本目录即可：
+
+```
+创建房间 → 约 2.5 秒后「对手」自动加入 → 布阵 → 随机先手 → 轮流开火 → 结算
+```
+
+对手由 `services/offlineGame.js` 驱动的本地 AI 扮演（会优先追打已命中格的相邻格），
+除对手是 AI 外，其余流程、界面与真实联机完全一致。
+
+### 方式二：接入云开发（真实双人对战）
+
+1. 把 `miniprogram/config/cloud.js` 的 `USE_CLOUD` 改回 `true`
+2. 用**微信开发者工具**导入本目录，把 `project.config.json` 的 `appid` 换成自己的小程序 AppID
 3. 开通云开发并创建环境，把环境 ID 填进 `miniprogram/config/cloud.js`
 4. 在云开发控制台创建 `rooms`、`games` 两个集合并设置权限
 5. 上传 `cloudfunctions/` 下的 `room`、`game`、`cleanup` 三个云函数
@@ -110,32 +145,44 @@ zfj/
 
 > 完整步骤见 **[docs/云开发部署说明.md](docs/云开发部署说明.md)**
 
-### 方式二：本地离线调试（无需云环境）
-
-把 `miniprogram/config/cloud.js` 里的 `USE_CLOUD` 改为 `false`，
-对手由 `services/localGame.js` 在本地模拟，其余流程完全一致。
-
-### 运行核心逻辑自测
+### 运行自测
 
 ```bash
-node scripts/test-core.js       # 22 项用例：形状 / 旋转 / 碰撞 / 判定 / 胜负 / 随机布阵
-node scripts/sync-shared.js     # 改完 miniprogram/utils 或 config 后，同步到云函数目录
+node scripts/test-core.js          # 22 项：形状 / 旋转 / 碰撞 / 判定 / 胜负 / 随机布阵
+node scripts/test-offline-flow.js  # 45 项：建房 → 布阵 → 开局 → 开火 → 结算 全链路
+node scripts/sync-shared.js        # 改完 miniprogram/config 或 utils 后，同步到云函数目录
 ```
+
+---
+
+## 社交功能（本期已做）
+
+| 功能 | 说明 | 落地位置 |
+|---|---|---|
+| 分享邀战卡片 | 房间等待页「邀请好友加入」→ 好友点开直达加入页并回填房间号 / 密码 | `pages/room` |
+| 最近对手一键再邀 | 对局结束自动记下对手（本地存最近 5 位），大厅 / 结算页可「再邀一局」，转发文案带上对方名字 | `services/rivals.js` |
+| 局内快捷表情 | 6 个白名单表情，实时气泡展示（自己右侧、对方左侧），自动消失 | `pages/battle` + `cloudfunctions/game` |
+| 分享战报 | 结算页按胜负生成不同文案的转发卡片 | `pages/result` |
+
+> 本期**不做**观战与弹幕（按需求方确认）。
 
 ---
 
 ## 当前进度
 
 - [x] 微信小程序工程骨架
-- [x] 核心玩法逻辑（含单元测试）
+- [x] 核心玩法逻辑（含单元测试 22 项）
 - [x] 数据驱动的机型 / 道具配置
 - [x] 本地单机对局闭环（用于验证）
 - [x] **云端联机**：房间服务 + 实时对战同步（微信云开发）
 - [x] 服务端布阵校验与命中判定（防作弊 / T-08 保障）
 - [x] 回合超时、投降、断线兜底
+- [x] **统一数据接口层**：一套 API 分派云端 / 离线两种实现
+- [x] **离线引擎**：无云环境也能跑通完整对局（含 45 项集成测试）
+- [x] **社交**：分享邀战卡片、最近对手一键再邀、局内快捷表情、分享战报
 - [ ] 微信登录与身份体系（当前以 OPENID 作为身份）
-- [ ] 社交：分享邀战卡片、最近对手、局内快捷表情
 - [ ] V2：积分等级体系、多机型、道具系统
+- [ ] V3：观战、弹幕
 
 详见 [docs/炸飞机_PRD_v1.1.html](docs/炸飞机_PRD_v1.1.html)
 

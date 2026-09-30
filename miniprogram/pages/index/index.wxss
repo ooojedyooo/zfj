@@ -17,6 +17,55 @@
   color: var(--c-text-muted);
 }
 
+.mode-tag {
+  display: inline-block;
+  margin-top: 20rpx;
+  font-size: 22rpx;
+  color: var(--c-text-muted);
+  background: var(--c-gray);
+  border-radius: 20rpx;
+  padding: 6rpx 20rpx;
+}
+
+/* 最近对手 */
+.rival-card {
+  margin-top: 24rpx;
+  padding: 24rpx 28rpx;
+}
+
+.rival-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+}
+
+.rival-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+  min-width: 0;
+}
+
+.rival-label {
+  font-size: 22rpx;
+  color: var(--c-text-muted);
+}
+
+.rival-name {
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.rival-btn {
+  flex: none;
+  padding: 14rpx 32rpx;
+  border-radius: 999rpx;
+  background: var(--c-primary-light);
+  color: var(--c-primary-dark);
+  font-size: 26rpx;
+}
+
 .rules-entry {
   text-align: center;
   margin-top: 40rpx;

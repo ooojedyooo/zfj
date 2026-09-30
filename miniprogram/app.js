@@ -33,7 +33,7 @@ App({
   /** 初始化云开发 */
   initCloud() {
     if (!USE_CLOUD) {
-      console.info('[zfj] 本地调试模式（未启用云开发）')
+      console.info('[zfj] 离线试玩模式（未启用云开发，对手由本地 AI 扮演）')
       return
     }
     if (!wx.cloud) {
@@ -45,5 +45,12 @@ App({
       traceUser: true
     })
     this.globalData.cloudReady = true
+  },
+
+  /** 统一开启「转发」入口（页面 onLoad 里调用一次即可） */
+  enableShare() {
+    if (typeof wx.showShareMenu === 'function') {
+      wx.showShareMenu({ menus: ['shareAppMessage'] })
+    }
   }
 })

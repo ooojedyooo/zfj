@@ -18,17 +18,60 @@ Page({
     joinPassword: '',
     playerCount: 0,
     waitSeconds: TIMEOUT.ROOM,
-    loading: false
+    loading: false,
+    isCloud: api.isCloud
   },
 
   onLoad(options) {
-    const mode = options.mode || 'create'
+    const app = getApp()
+    app.enableShare()
+
+    let mode = options.mode || 'create'
+    // 从分享卡片进来：自动切到「加入房间」并回填房间号 / 密码
+    const sharedRoomNo = String(options.roomNo || '').trim()
+    const sharedPwd = options.pwd ? decodeURIComponent(options.pwd) : ''
+    if (sharedRoomNo) mode = 'join'
+
+    // 从结算页带过来的飞机数量，沿用上一局设置
+    const planes = Number(options.planes)
+    const planeCount = (planes >= MIN_PLANES && planes <= MAX_PLANES) ? planes : MIN_PLANES
+
     this.setData({
       mode,
-      password: String(Math.floor(1000 + Math.random() * 9000))
+      planeCount,
+      password: String(Math.floor(1000 + Math.random() * 9000)),
+      joinRoomNo: /^\d{6}$/.test(sharedRoomNo) ? sharedRoomNo : '',
+      joinPassword: sharedPwd
     })
+
     if (mode === 'join') wx.setNavigationBarTitle({ title: '加入房间' })
     if (mode === 'random') wx.setNavigationBarTitle({ title: '随机匹配' })
+
+    // 从结算页 / 大厅「再邀一局」进来：自动建房并停下等待好友
+    if (options.auto === '1') {
+      this.rivalName = options.rival ? decodeURIComponent(options.rival) : ''
+      wx.setNavigationBarTitle({ title: '邀请好友' })
+      this.onStartCreate()
+    }
+  },
+
+  /** 分享房间卡片：好友点开直达「加入房间」并回填房间号 */
+  onShareAppMessage() {
+    const d = this.data
+    if (d.roomNo) {
+      const pwd = d.usePassword ? '&pwd=' + encodeURIComponent(d.password) : ''
+      const title = this.rivalName
+        ? '炸飞机 · ' + this.rivalName + '，房间 ' + d.roomNo + '，接着上次的账继续算！'
+        : '炸飞机 · 房间号 ' + d.roomNo + '，来跟我打一局！'
+      return {
+        title,
+        path: '/pages/room/room?mode=join&roomNo=' + d.roomNo + pwd
+      }
+    }
+    return {
+      title: '炸飞机 · 9×9 双人实时对战，机头一炮击毁',
+      path: '/pages/index/index'
+    }
   },
 
   onUnload() {

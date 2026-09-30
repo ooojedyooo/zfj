@@ -1,75 +1,57 @@
 // services/cloudApi.js
-// 云函数调用封装 + 房间实时监听
+// 【对外统一数据接口 / 分派器】
 //
-// 约定：所有云函数统一返回 { ok: boolean, data?: any, msg?: string, code?: string }
-// 本模块把 ok:false 统一转成 Promise reject，页面只需 try/catch。
+// 页面只 require 这一个模块，拿到的永远是一套相同的 API：
+//   createRoom / joinRoom / matchRoom / getRoom / leaveRoom
+//   deploy / fire / emote / surrender / tick / sync / watchRoom
+//
+// 背后实现由 config/cloud.js 的 USE_CLOUD 决定：
+//   USE_CLOUD = true  → services/cloudImpl.js（微信云开发，真联机）
+//   USE_CLOUD = false → services/offlineGame.js（本地离线引擎，对手由 AI 扮演）
+//
+// 这样「云环境还没配好」时也能把游戏完整跑起来，等云环境就绪只需改一个开关。
 
-const { FUNCTIONS, COLLECTIONS } = require('../config/cloud')
+const { USE_CLOUD } = require('../config/cloud')
+const cloudImpl = require('./cloudImpl')
+const offline = require('./offlineGame')
 
-/** 调用云函数 */
-function call(name, action, data) {
-  return new Promise((resolve, reject) => {
-    if (!wx.cloud) {
-      reject(new Error('当前基础库不支持云开发，请升级微信版本'))
-      return
+const impl = USE_CLOUD ? cloudImpl : offline
+
+/** 方法分派：统一走当前实现，缺失时给出明确报错 */
+function route(name) {
+  return function (params) {
+    const fn = impl[name]
+    if (typeof fn !== 'function') {
+      return Promise.reject(new Error('当前数据源未实现方法：' + name))
     }
-    wx.cloud.callFunction({
-      name,
-      data: Object.assign({ action: action }, data || {}),
-      success: (res) => {
-        const r = res.result || {}
-        if (r.ok) {
-          resolve(r.data)
-        } else {
-          const err = new Error(r.msg || '操作失败')
-          err.code = r.code
-          reject(err)
-        }
-      },
-      fail: (err) => {
-        console.error('[cloudApi] callFunction fail', name, action, err)
-        reject(new Error('网络异常，请重试'))
-      }
-    })
-  })
-}
-
-/**
- * 实时监听房间文档
- * @param {string} roomId
- * @param {(room:Object)=>void} onChange
- * @param {(err:Error)=>void} [onError]
- * @returns watcher（务必在页面 onUnload 时调用 close()）
- */
-function watchRoom(roomId, onChange, onError) {
-  const db = wx.cloud.database()
-  return db.collection(COLLECTIONS.ROOMS).where({ _id: roomId }).watch({
-    onChange(snapshot) {
-      const room = snapshot.docs && snapshot.docs[0]
-      if (room && typeof onChange === 'function') onChange(room)
-    },
-    onError(err) {
-      console.error('[cloudApi] watch error', err)
-      if (typeof onError === 'function') onError(err)
-    }
-  })
+    return fn(params)
+  }
 }
 
 module.exports = {
-  call,
-  watchRoom,
+  /** 当前是否走云端联机（页面可用于文案提示，如「AI 陪练」） */
+  isCloud: USE_CLOUD,
 
   /* 房间 */
-  createRoom: (p) => call(FUNCTIONS.ROOM, 'create', p),
-  joinRoom: (p) => call(FUNCTIONS.ROOM, 'join', p),
-  matchRoom: (p) => call(FUNCTIONS.ROOM, 'match', p),
-  getRoom: (p) => call(FUNCTIONS.ROOM, 'get', p),
-  leaveRoom: (p) => call(FUNCTIONS.ROOM, 'leave', p),
+  createRoom: route('createRoom'),
+  joinRoom: route('joinRoom'),
+  matchRoom: route('matchRoom'),
+  getRoom: route('getRoom'),
+  leaveRoom: route('leaveRoom'),
 
   /* 对局 */
-  deploy: (p) => call(FUNCTIONS.GAME, 'deploy', p),
-  fire: (p) => call(FUNCTIONS.GAME, 'fire', p),
-  surrender: (p) => call(FUNCTIONS.GAME, 'surrender', p),
-  tick: (p) => call(FUNCTIONS.GAME, 'tick', p),
-  sync: (p) => call(FUNCTIONS.GAME, 'sync', p)
+  deploy: route('deploy'),
+  fire: route('fire'),
+  emote: route('emote'),
+  surrender: route('surrender'),
+  tick: route('tick'),
+  sync: route('sync'),
+
+  /* 实时监听（离线实现为本地事件广播，签名一致） */
+  watchRoom: (roomId, onChange, onError) => impl.watchRoom(roomId, onChange, onError),
+
+  /* ---- 以下仅离线模式有效，供调试与自动化测试加速使用 ---- */
+  setDelays: (d) => {
+    if (typeof offline.setDelays === 'function') offline.setDelays(d)
+  }
 }

@@ -8,6 +8,8 @@
     </view>
   </view>
 
+  <view wx:if="{{!isCloud}}" class="mode-tip">离线试玩模式 · 对手由本地 AI 扮演</view>
+
   <!-- 我方海域 -->
   <view class="area {{focus === 'mine' ? 'focused' : 'dimmed'}}" bindtap="focusMine">
     <view class="area-title">
@@ -38,10 +40,31 @@
     <view class="coord">
       {{selected ? '横' + selected.col + '，竖' + selected.row : '请选择轰炸坐标'}}
     </view>
+    <view class="emoji-toggle {{emoteBarOpen ? 'on' : ''}}" bindtap="onToggleEmote">😀</view>
     <button class="btn btn-primary fire-btn" bindtap="onFire">发射</button>
   </view>
 
-  <button class="btn btn-danger surrender" bindtap="onSurrender">投降</button>
+  <!-- 快捷表情栏 -->
+  <view wx:if="{{emoteBarOpen}}" class="emote-bar">
+    <view
+      wx:for="{{emotes}}"
+      wx:key="emoji"
+      class="emote-item"
+      data-emoji="{{item.emoji}}"
+      bindtap="onSendEmote"
+    >{{item.emoji}}</view>
+  </view>
+
+  <view class="bottom-row">
+    <button class="btn btn-danger surrender" bindtap="onSurrender">投降</button>
+    <button class="btn btn-outline share-btn" open-type="share">邀请好友</button>
+  </view>
+
+  <!-- 表情气泡 -->
+  <view wx:if="{{emoteBubble}}" class="emote-bubble {{emoteBubble.mine ? 'mine' : 'foe'}}">
+    <text class="emote-bubble-who">{{emoteBubble.mine ? '你' : '对方'}}</text>
+    <text class="emote-bubble-emoji">{{emoteBubble.emoji}}</text>
+  </view>
 
   <!-- 命中反馈 -->
   <view wx:if="{{resultToast}}" class="result-toast">{{resultToast}}</view>

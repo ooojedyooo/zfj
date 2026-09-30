@@ -1,4 +1,6 @@
 <view class="page-wrap">
+  <view wx:if="{{!isCloud}}" class="mode-tip">离线试玩模式 · 对手由本地 AI 扮演</view>
+
   <view class="bar">
     <view class="tip">点击棋盘放置飞机 · 锚点为机头</view>
     <view class="countdown {{countdown <= 10 ? 'urgent' : ''}}">{{countdown}}s</view>

@@ -4,9 +4,11 @@
 // 操作：点选未攻击格 + 点击「发射」两步式出招
 // 数据：全部来自云端；通过 watch 实时同步，本地不做任何判定
 const api = require('../../services/cloudApi')
+const rivals = require('../../services/rivals')
 const { createMatrix } = require('../../utils/board')
 const { getAbsoluteCells } = require('../../utils/plane')
 const { RESULT, BOARD_SIZE, TIMEOUT } = require('../../config/rules')
+const { EMOTES, EMOTE_HIDE_MS } = require('../../config/social')
 
 const RESULT_TEXT = {
   [RESULT.MISS]: '未击中',
@@ -31,11 +33,17 @@ Page({
     turnSeconds: TIMEOUT.TURN,
     myDestroyed: 0,
     foeDestroyed: 0,
-    planeCount: 1
+    planeCount: 1,
+    // 社交
+    emotes: EMOTES,
+    emoteBarOpen: false,
+    emoteBubble: null,   // { emoji, mine } 展示最新一条表情
+    isCloud: api.isCloud
   },
 
   async onLoad() {
     const app = getApp()
+    app.enableShare()
     const match = app.globalData.match || {}
     this.roomId = match.roomId
 
@@ -50,6 +58,7 @@ Page({
       this.myOpenid = data.myOpenid
       this.myDeploy = data.myDeploy || []
       this.setData({ planeCount: this.myDeploy.length || match.planeCount || 1 })
+      this.resolveFoe(data.players)
       this.applyBattle(data.battle)
     } catch (e) {
       wx.showToast({ title: e.message || '同步失败', icon: 'none' })
@@ -62,6 +71,20 @@ Page({
   onUnload() {
     this.stopWatch()
     this.stopTimer()
+    if (this.emoteTimer) {
+      clearTimeout(this.emoteTimer)
+      this.emoteTimer = null
+    }
+  },
+
+  /** 分享战报（社交：把当前战况分享给好友） */
+  onShareAppMessage() {
+    return {
+      title: this.data.finished
+        ? '炸飞机 · 我刚打完一局硬仗，来不来？'
+        : '炸飞机 · 我正在跟人火拼，快来蹲我',
+      path: '/pages/index/index'
+    }
   },
 
   /* ---------------- 实时同步 ---------------- */
@@ -114,6 +137,13 @@ Page({
   },
 
   /* ---------------- 渲染 ---------------- */
+  /** 从玩家列表里找出对手的 openid（用于记录最近对手） */
+  resolveFoe(players) {
+    const list = players || []
+    const foe = list.find(p => p && p.openid && p.openid !== this.myOpenid)
+    this.foeOpenid = foe ? foe.openid : ''
+  },
+
   applyBattle(b) {
     if (!b || !this.myOpenid) return
     this.lastBattle = b
@@ -140,10 +170,57 @@ Page({
       turnSeconds: b.turnDeadline ? Math.max(0, Math.ceil((b.turnDeadline - Date.now()) / 1000)) : 0
     })
 
+    // 快捷表情：按 seq 去重，避免 watch 重推时重复弹泡
+    if (b.emote && b.emote.seq !== this.lastEmoteSeq) {
+      this.lastEmoteSeq = b.emote.seq
+      this.showEmote(b.emote)
+    }
+
     if (finished && !this.resultHandled) {
       this.resultHandled = true
+      this.recordRival(b)
       setTimeout(() => this.goResult(b), 800)
     }
+  },
+
+  /* ---------------- 局内快捷表情 ---------------- */
+  onToggleEmote() {
+    if (this.data.finished) return
+    this.setData({ emoteBarOpen: !this.data.emoteBarOpen })
+  },
+
+  async onSendEmote(e) {
+    const emoji = e.currentTarget.dataset.emoji
+    this.setData({ emoteBarOpen: false })
+    if (!emoji || !this.roomId) return
+    try {
+      await api.emote({ roomId: this.roomId, emoji })
+    } catch (err) {
+      // 表情属锦上添花，失败静默即可，不打断对局
+      console.warn('[battle] emote failed', err && err.message)
+    }
+  },
+
+  /** 弹出一条表情气泡，EMOTE_HIDE_MS 后自动消失 */
+  showEmote(emote) {
+    if (!emote || !emote.emoji) return
+    const mine = emote.by === this.myOpenid
+    if (this.emoteTimer) clearTimeout(this.emoteTimer)
+    this.setData({ emoteBubble: { emoji: emote.emoji, mine } })
+    this.emoteTimer = setTimeout(() => {
+      this.setData({ emoteBubble: null })
+      this.emoteTimer = null
+    }, EMOTE_HIDE_MS)
+  },
+
+  /* ---------------- 最近对手 ---------------- */
+  recordRival(b) {
+    if (!this.foeOpenid) return
+    rivals.add({
+      openid: this.foeOpenid,
+      virtual: !api.isCloud,          // 离线模式下对手是本地 AI
+      win: b.winner === this.myOpenid
+    })
   },
 
   /** 我方海域：自己的飞机 + 被炸痕迹（自己的飞机当然看得见） */

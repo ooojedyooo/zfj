@@ -1,4 +1,13 @@
 /* pages/room/room.wxss */
+.mode-tip {
+  font-size: 22rpx;
+  color: var(--c-text-muted);
+  background: var(--c-gray);
+  border-radius: 12rpx;
+  padding: 10rpx 20rpx;
+  margin-bottom: 20rpx;
+}
+
 .row {
   display: flex;
   align-items: center;

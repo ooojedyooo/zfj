@@ -19,7 +19,8 @@ Page({
     rotationLabel: '↑',
     countdown: TIMEOUT.DEPLOY,
     readying: false,
-    waitingOpponent: false
+    waitingOpponent: false,
+    isCloud: api.isCloud
   },
 
   onLoad() {

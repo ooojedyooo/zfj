@@ -20,6 +20,7 @@ const {
   RESULT, BOARD_SIZE, MIN_PLANES, MAX_PLANES,
   TIMEOUT, MAX_TURN_TIMEOUT_STREAK, END_TYPE
 } = require('./shared/config/rules')
+const { EMOTE_LIST } = require('./shared/config/social')
 
 const ok = (data) => ({ ok: true, data })
 const fail = (msg, code) => ({ ok: false, msg: msg, code: code || 'ERROR' })
@@ -45,6 +46,7 @@ exports.main = async (event) => {
     switch (event.action) {
       case 'deploy': return await deploy(event, OPENID)
       case 'fire': return await fire(event, OPENID)
+      case 'emote': return await emote(event, OPENID)
       case 'surrender': return await surrender(event, OPENID)
       case 'tick': return await tick(event, OPENID)
       case 'sync': return await sync(event, OPENID)
@@ -246,6 +248,29 @@ async function fire(event, openid) {
     turn: b.turn,
     seq: b.seq
   })
+}
+
+/* ---------------- 快捷表情（局内社交，本期同步做） ---------------- */
+// 仅允许在对局进行中发送；表情写入 battle.emote，双方通过 watch 实时收到。
+// 采用「白名单 + 递增 seq」：白名单防止任意字符串注入，seq 供客户端去重。
+async function emote(event, openid) {
+  const room = await mustGetRoom(event.roomId)
+  if (!room) return fail('房间不存在', 'NOT_FOUND')
+  if (!isPlayer(room, openid)) return fail('你不在该房间中', 'NOT_PLAYER')
+  if (!room.battle) return fail('对局尚未开始', 'BAD_STATE')
+  if (room.battle.finished) return fail('对局已结束', 'FINISHED')
+
+  const emoji = String(event.emoji || '')
+  if (EMOTE_LIST.indexOf(emoji) < 0) return fail('不支持的表情', 'BAD_EMOJI')
+
+  const b = room.battle
+  b.seq = (b.seq || 0) + 1
+  b.emote = { by: openid, emoji, at: Date.now(), seq: b.seq }
+
+  await db.collection(ROOMS).doc(event.roomId).update({
+    data: { battle: b, updatedAt: Date.now() }
+  })
+  return ok({ seq: b.seq })
 }
 
 /* ---------------- 投降（T-07） ---------------- */

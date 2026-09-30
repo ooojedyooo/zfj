@@ -1,0 +1,31 @@
+/* pages/index/index.wxss */
+.hero {
+  padding: 120rpx 0 80rpx;
+  text-align: center;
+}
+
+.logo {
+  font-size: 72rpx;
+  font-weight: 700;
+  color: var(--c-primary-dark);
+  letter-spacing: 8rpx;
+}
+
+.slogan {
+  margin-top: 16rpx;
+  font-size: 26rpx;
+  color: var(--c-text-muted);
+}
+
+.rules-entry {
+  text-align: center;
+  margin-top: 40rpx;
+  font-size: 28rpx;
+  color: var(--c-primary);
+  text-decoration: underline;
+}
+
+.foot {
+  margin-top: 80rpx;
+  font-size: 22rpx;
+}

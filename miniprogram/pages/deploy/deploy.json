@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "布置飞机",
+  "usingComponents": {
+    "board-grid": "/components/board-grid/index"
+  }
+}

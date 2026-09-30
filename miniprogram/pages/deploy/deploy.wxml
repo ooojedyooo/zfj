@@ -1,0 +1,29 @@
+<view class="page-wrap">
+  <view class="bar">
+    <view class="tip">点击棋盘放置飞机 · 锚点为机头</view>
+    <view class="countdown {{countdown <= 10 ? 'urgent' : ''}}">{{countdown}}s</view>
+  </view>
+
+  <view class="board-wrap">
+    <board-grid cells="{{cells}}" size="{{size}}" selectable="{{true}}" bindcelltap="onBoardTap" />
+  </view>
+
+  <view class="card">
+    <view class="row">
+      <text>飞机数量</text>
+      <text class="strong">{{placed.length}} / {{planeCount}}</text>
+    </view>
+    <view class="row">
+      <text>当前朝向</text>
+      <text class="strong">{{rotationLabel}}</text>
+    </view>
+  </view>
+
+  <view class="ops">
+    <button class="btn btn-outline op" bindtap="onRotate">旋转</button>
+    <button class="btn btn-outline op" bindtap="onRandom">随机布阵</button>
+    <button class="btn btn-outline op" bindtap="onClear">清空</button>
+  </view>
+
+  <button class="btn btn-primary" bindtap="onReady">就绪</button>
+</view>

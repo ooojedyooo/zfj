@@ -1,0 +1,36 @@
+/* pages/result/result.wxss */
+.result-head {
+  text-align: center;
+  padding: 80rpx 0 60rpx;
+}
+
+.result-title {
+  font-size: 72rpx;
+  font-weight: 700;
+  letter-spacing: 12rpx;
+}
+
+.result-head.win .result-title {
+  color: var(--c-primary);
+}
+
+.result-head.lose .result-title {
+  color: var(--c-danger);
+}
+
+.result-sub {
+  margin-top: 16rpx;
+  font-size: 26rpx;
+  color: var(--c-text-muted);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid var(--c-border);
+}
+
+.row:last-child {
+  border-bottom: none;
+}

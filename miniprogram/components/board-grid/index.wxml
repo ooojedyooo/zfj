@@ -1,0 +1,12 @@
+<view class="grid" style="grid-template-columns: repeat({{size}}, 1fr);">
+  <block wx:for="{{cells}}" wx:for-item="rowArr" wx:for-index="ri" wx:key="index">
+    <block wx:for="{{rowArr}}" wx:for-item="cell" wx:for-index="ci" wx:key="index">
+      <view
+        class="cell {{cell}} {{selected && selected.row === ri + 1 && selected.col === ci + 1 ? 'selected' : ''}} {{disabledMap[ri + 1 + ',' + (ci + 1)] ? 'locked' : ''}}"
+        data-row="{{ri + 1}}"
+        data-col="{{ci + 1}}"
+        bindtap="onTapCell"
+      ></view>
+    </block>
+  </block>
+</view>

@@ -1,0 +1,14 @@
+<view class="page-wrap">
+  <view class="hero">
+    <view class="logo">炸飞机</view>
+    <view class="slogan">9×9 棋盘 · 双人实时对战</view>
+  </view>
+
+  <button class="btn btn-primary" bindtap="onCreateRoom">创建房间</button>
+  <button class="btn btn-outline" bindtap="onJoinRoom">加入房间</button>
+  <button class="btn btn-outline" bindtap="onRandomMatch">随机匹配</button>
+
+  <view class="rules-entry" bindtap="onRules">查看玩法规则</view>
+
+  <view class="foot muted center">玩家标识：{{playerId}}</view>
+</view>

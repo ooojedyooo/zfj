@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "对战中",
+  "usingComponents": {
+    "board-grid": "/components/board-grid/index"
+  }
+}

@@ -1,0 +1,94 @@
+/* pages/room/room.wxss */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 0;
+  border-bottom: 1rpx solid var(--c-border);
+}
+
+.row:last-child { border-bottom: none; }
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+}
+
+.stepper-btn {
+  width: 56rpx;
+  height: 56rpx;
+  line-height: 52rpx;
+  text-align: center;
+  border-radius: 12rpx;
+  background: var(--c-primary-light);
+  color: var(--c-primary-dark);
+  font-size: 32rpx;
+}
+
+.stepper-val {
+  min-width: 48rpx;
+  text-align: center;
+  font-weight: 600;
+}
+
+.pwd-box {
+  margin-top: 24rpx;
+  padding: 20rpx 24rpx;
+  background: var(--c-primary-light);
+  border-radius: 16rpx;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.pwd {
+  font-size: 40rpx;
+  font-weight: 700;
+  letter-spacing: 8rpx;
+  color: var(--c-primary-dark);
+}
+
+.field {
+  margin-top: 24rpx;
+}
+
+.field-label {
+  display: block;
+  font-size: 26rpx;
+  color: var(--c-text-muted);
+  margin-bottom: 12rpx;
+}
+
+.field input {
+  border: 1rpx solid var(--c-border);
+  border-radius: 12rpx;
+  padding: 20rpx 24rpx;
+  font-size: 30rpx;
+}
+
+.room-id {
+  margin: 32rpx 0;
+}
+
+.room-id-num {
+  display: block;
+  font-size: 64rpx;
+  font-weight: 700;
+  letter-spacing: 8rpx;
+  color: var(--c-primary-dark);
+}
+
+.loading-ring {
+  width: 64rpx;
+  height: 64rpx;
+  margin: 24rpx auto 32rpx;
+  border: 6rpx solid var(--c-primary-light);
+  border-top-color: var(--c-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

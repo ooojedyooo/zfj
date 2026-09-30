@@ -1,0 +1,34 @@
+<view class="page-wrap">
+
+  <view class="result-head {{win ? 'win' : 'lose'}}">
+    <view class="result-title">{{win ? '胜 利' : '失 败'}}</view>
+    <view class="result-sub">{{endLabel}}</view>
+  </view>
+
+  <view class="card">
+    <view class="row">
+      <text>我方剩余飞机</text>
+      <text class="strong">{{mySurvived}} / {{mySurvived + foeDestroyed}}</text>
+    </view>
+    <view class="row">
+      <text>对方剩余飞机</text>
+      <text class="strong">{{foeSurvived}} / {{foeSurvived + myDestroyed}}</text>
+    </view>
+    <view class="row">
+      <text>我方出手次数</text>
+      <text class="strong">{{myShots}}</text>
+    </view>
+    <view class="row">
+      <text>对方出手次数</text>
+      <text class="strong">{{foeShots}}</text>
+    </view>
+    <view class="row">
+      <text>房间号</text>
+      <text class="strong">{{roomId}}</text>
+    </view>
+  </view>
+
+  <button class="btn btn-primary" bindtap="onAgain">再来一局</button>
+  <button class="btn btn-outline" bindtap="onBackHome">返回大厅</button>
+
+</view>

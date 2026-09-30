@@ -1,0 +1,19 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/room/room",
+    "pages/deploy/deploy",
+    "pages/battle/battle",
+    "pages/result/result"
+  ],
+  "window": {
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#185FA5",
+    "navigationBarTitleText": "炸飞机",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#F6F7F9"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

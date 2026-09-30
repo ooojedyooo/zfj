@@ -1,0 +1,46 @@
+/* components/board-grid/index.wxss */
+.grid {
+  display: grid;
+  gap: 2rpx;
+  background: #D3D1C7;
+  border: 1rpx solid #B4B2A9;
+  border-radius: 12rpx;
+  overflow: hidden;
+  width: 100%;
+}
+
+.cell {
+  aspect-ratio: 1 / 1;
+  background: #FFFFFF;
+  transition: background-color 0.15s;
+}
+
+/* 我方飞机（完好） */
+.cell.plane {
+  background: #B5D4F4;
+}
+
+/* 被击中 */
+.cell.hit {
+  background: #E24B4A;
+}
+
+/* 被击毁 —— 注意：仅机头格显示（T-08，不揭示飞机其余格位） */
+.cell.kill {
+  background: #A32D2D;
+}
+
+/* 已试未中 */
+.cell.miss {
+  background: #E5E2DA;
+}
+
+/* 当前选中格 */
+.cell.selected {
+  box-shadow: inset 0 0 0 6rpx #185FA5;
+}
+
+/* 已攻击过、不可再次选中 */
+.cell.locked {
+  opacity: 0.85;
+}

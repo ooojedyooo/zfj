@@ -1,0 +1,46 @@
+<view class="page-wrap battle">
+
+  <view class="status-bar">
+    <view class="status-text {{myTurn ? 'active' : ''}}">{{statusText}}</view>
+    <view class="shots">我方 {{myShots}} · 对方 {{foeShots}}</view>
+  </view>
+
+  <!-- 我方海域 -->
+  <view class="area {{focus === 'mine' ? 'focused' : 'dimmed'}}" bindtap="focusMine">
+    <view class="area-title">
+      <text>我方海域 · 受损情况</text>
+      <text wx:if="{{focus === 'mine'}}" class="tag">焦点</text>
+    </view>
+    <board-grid cells="{{myCells}}" size="{{size}}" selectable="{{false}}" />
+  </view>
+
+  <!-- 敌方海域 -->
+  <view class="area {{focus === 'foe' ? 'focused' : 'dimmed'}}" bindtap="focusFoe">
+    <view class="area-title">
+      <text>敌方海域 · 我方战况</text>
+      <text wx:if="{{focus === 'foe'}}" class="tag">焦点</text>
+    </view>
+    <board-grid
+      cells="{{foeCells}}"
+      size="{{size}}"
+      selectable="{{myTurn && !finished}}"
+      selected="{{selected}}"
+      disabledMap="{{foeDisabled}}"
+      bindcelltap="onFoeCellTap"
+    />
+  </view>
+
+  <!-- 出招区 -->
+  <view class="fire-bar">
+    <view class="coord">
+      {{selected ? '横' + selected.col + '，竖' + selected.row : '请选择轰炸坐标'}}
+    </view>
+    <button class="btn btn-primary fire-btn" bindtap="onFire">发射</button>
+  </view>
+
+  <button class="btn btn-danger surrender" bindtap="onSurrender">投降</button>
+
+  <!-- 命中反馈 -->
+  <view wx:if="{{resultToast}}" class="result-toast">{{resultToast}}</view>
+
+</view>

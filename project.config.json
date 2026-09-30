@@ -1,6 +1,7 @@
 {
   "description": "炸飞机 · 微信小程序双人对战游戏",
   "miniprogramRoot": "miniprogram/",
+  "cloudfunctionRoot": "cloudfunctions/",
   "compileType": "miniprogram",
   "appid": "touristappid",
   "projectname": "zfj",

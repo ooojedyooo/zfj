@@ -2,7 +2,10 @@
 
   <view class="status-bar">
     <view class="status-text {{myTurn ? 'active' : ''}}">{{statusText}}</view>
-    <view class="shots">我方 {{myShots}} · 对方 {{foeShots}}</view>
+    <view class="shots">
+      <text>我方 {{myShots}} · 对方 {{foeShots}}</text>
+      <text wx:if="{{!finished}}" class="cd">· {{turnSeconds}}s</text>
+    </view>
   </view>
 
   <!-- 我方海域 -->

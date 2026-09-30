@@ -25,6 +25,11 @@
   color: var(--c-text-muted);
 }
 
+.shots .cd {
+  color: var(--c-primary);
+  font-weight: 600;
+}
+
 .area {
   background: #FFFFFF;
   border-radius: 24rpx;

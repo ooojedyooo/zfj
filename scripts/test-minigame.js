@@ -307,19 +307,6 @@ async function main() {
   })
   check('对战场景可渲染', function () { app.renderOnce() })
 
-  const fb = battle.geo.foeBoard
-  check('双棋盘均在屏内', function () {
-    const mb = battle.geo.mineBoard
-    assert.ok(mb.y >= 0 && mb.y + mb.size <= 667, '我方棋盘溢出')
-    assert.ok(fb.y >= 0 && fb.y + fb.size <= 667, '敌方棋盘溢出')
-    assert.ok(battle.geo.mineBlock.h + battle.geo.foeBlock.h < 667, '两块棋盘合计超屏')
-  })
-  check('「发射」按钮与底部操作栏均在屏内', function () {
-    const b = battle.geo.fireBtn
-    const s = battle.geo.surrenderBtn
-    assert.ok(b.y + b.h <= 667 && s.y + s.h <= 667)
-  })
-
   await waitFor(function () { return battle.myTurn }, '轮到我方出手')
   check('轮次已交替到我方', function () { assert.ok(battle.myTurn) })
   check('敌方棋盘此时可点选', function () {
@@ -328,14 +315,47 @@ async function main() {
     assert.ok(cellZones.filter(function (z) { return !z.disabled }).length > 0)
   })
 
+  // 几何检查放在轮次落定之后：出招区（发射按钮）只在「轮到我方」时才存在，
+  // 且回合切换会触发 layout() 重算两盘棋的位置与尺寸
+  check('双棋盘均在屏内', function () {
+    const L = app.layout
+    ;[['我方', battle.geo.mineBoard], ['敌方', battle.geo.foeBoard]].forEach(function (it) {
+      assert.ok(it[1].x >= 0 && it[1].y >= 0, it[0] + '棋盘左上出屏')
+      assert.ok(it[1].x + it[1].size <= L.W, it[0] + '棋盘右侧出屏')
+      assert.ok(it[1].y + it[1].size <= L.H, it[0] + '棋盘底部出屏')
+    })
+    assert.ok(battle.geo.mineBlock.h + battle.geo.foeBlock.h < L.H, '两块棋盘合计超屏')
+  })
+  check('「发射」按钮与底部操作栏均在屏内', function () {
+    const L = app.layout
+    const b = battle.geo.fireBtn
+    const s = battle.geo.surrenderBtn
+    assert.ok(b && s, '出招区未生成（fireBtn=' + !!b + ' surrenderBtn=' + !!s + '）')
+    assert.ok(b.y + b.h <= L.H && s.y + s.h <= L.H)
+  })
+
   // 选一格未被炸过的（先不打机头，验证「选中」这一步）
   const g = offline._getGame()
+  check('本局飞机数量为 1（后续断言依赖「一炮定胜负」）', function () {
+    assert.strictEqual(g.planeCount, 1, '实际 ' + g.planeCount)
+  })
   const head = headOf(g.foeDeployed[0])
+
+  // ⚠️ 几何必须在这里才取！
+  // 回合切换会让焦点跟着切（我方回合 → 敌盘放大 / 对方回合 → 我盘放大），
+  // applyBattle 检测到焦点变化会重跑 layout()，geo.foeBoard 的位置与尺寸都变了。
+  // 若在 waitFor(myTurn) 之前缓存 foeBoard，算出来的像素点会落到别的格子上
+  // （表现为「明明点了机头，却打到了镜像位置」），而且只在「先手是对方」时复现。
+  const fb = battle.geo.foeBoard
   const headRect = Board.cellRect({ x: fb.x, y: fb.y, size: fb.size }, head.row, head.col)
 
   tapRect(headRect)
   check('点选格位后写入 selected', function () {
-    assert.ok(battle.selected && battle.selected.row === head.row && battle.selected.col === head.col)
+    assert.ok(battle.selected, '未写入 selected')
+    assert.strictEqual(battle.selected.row, head.row,
+      '行号不符：期望 ' + head.row + '，实际 ' + battle.selected.row + '（几何是否为旧布局？）')
+    assert.strictEqual(battle.selected.col, head.col,
+      '列号不符：期望 ' + head.col + '，实际 ' + battle.selected.col)
   })
   check('被选中的格出现在置灰表之外', function () {
     assert.ok(!battle.disabledMap()[head.row + ',' + head.col])
@@ -343,11 +363,39 @@ async function main() {
   check('选中态可渲染（选中高亮）', function () { app.renderOnce() })
 
   // 发射
+  const selBeforeFire = battle.selected ? (battle.selected.row + ',' + battle.selected.col) : 'null'
   tapRect(battle.geo.fireBtn)
   await waitFor(function () { return battle.selected === null }, '开火后清空选中')
   check('开火后清空选中', function () { assert.strictEqual(battle.selected, null) })
+  check('发射坐标与点选一致', function () {
+    assert.strictEqual(selBeforeFire, head.row + ',' + head.col,
+      '发射坐标 ' + selBeforeFire + ' 与目标机头 ' + head.row + ',' + head.col + ' 不一致')
+  })
 
-  await waitFor(function () { return battle.finished }, '一方全灭', 8000)
+  try {
+    await waitFor(function () { return battle.finished }, '一方全灭', 8000)
+  } catch (e) {
+    // 失败时把对局状态打出来，否则只看到一句超时无从下手
+    console.error('\n  [诊断] 我方飞机数=' + battle.planeCount +
+      ' 轮次我方=' + battle.myTurn +
+      ' 我击毁=' + battle.foeDestroyed +
+      ' 我被毁=' + battle.myDestroyed +
+      ' 我出手=' + battle.myShots +
+      ' 对手出手=' + battle.foeShots +
+      ' 终局=' + battle.finished +
+      ' endType=' + (battle.lastBattle && battle.lastBattle.endType) +
+      '\n  [诊断] myOpenid=' + battle.myOpenid +
+      ' foeOpenid=' + battle.foeOpenid +
+      ' 发射坐标=' + selBeforeFire +
+      ' 我的轰炸记录=' + JSON.stringify(battle.mine) +
+      ' 全体marks=' + JSON.stringify((battle.lastBattle || {}).marks) +
+      ' 置灰表=' + JSON.stringify(Object.keys(battle.disabledMap())) +
+      '\n  [诊断] 目标机头=' + head.row + ',' + head.col +
+      ' 对手布阵=' + JSON.stringify(g.foeDeployed && g.foeDeployed.map(function (p) {
+        return { id: p.planeId, r: p.anchorRow, c: p.anchorCol, rot: p.rotation }
+      })))
+    throw e
+  }
   check('打中机头即击毁整机并结束对局', function () {
     assert.strictEqual(battle.foeDestroyed, 1)
     assert.ok(battle.finished)

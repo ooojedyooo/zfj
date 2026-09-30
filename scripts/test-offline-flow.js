@@ -59,6 +59,30 @@ function waitMyTurn(timeout = 5000) {
   }, '轮到我出手', timeout)
 }
 
+/**
+ * 建房 → 布阵 → 等到「轮到我出手」。
+ *
+ * ⚠️ 为什么需要重试：先手是随机决定的，本测试又把 AI 出手延时压到 40ms。
+ * 若先手是 AI，而它第一炮随机打中我**唯一一架**飞机的机头（1/81），
+ * 对局会在我出手之前就合法结束 —— 这是正常玩法结果，不是 bug。
+ * 只对「已经 finished」这一种情况重开，其它错误照常抛出。
+ */
+async function startGame(planeCount, maxTries = 8) {
+  for (let i = 0; i < maxTries; i++) {
+    await newRoom(planeCount)
+    await offline.deploy({ planes: toSubmit(randomDeploy(planeCount, 'standard', BOARD_SIZE)) })
+    try {
+      await waitMyTurn(1500)
+      return offline.getRoom()
+    } catch (e) {
+      const g = offline._getGame()
+      if (!g || !g.finished) throw e
+      // AI 先手且一发命中机头 → 重开一局
+    }
+  }
+  throw new Error('连续 ' + maxTries + ' 局都在我方出手前结束，疑似引擎异常')
+}
+
 /** 只取提交给服务端的字段（与 deploy 页保持一致） */
 function toSubmit(planes) {
   return planes.map(p => ({
@@ -175,13 +199,10 @@ async function main() {
   /* ============ 4. 对战：直取机头 → 全灭获胜 ============ */
   section('[4] 对战：击中机头即击毁（BAT 模块）')
 
-  await newRoom(1)
-  await offline.deploy({ planes: toSubmit(randomDeploy(1, 'standard', BOARD_SIZE)) })
-
+  await startGame(1)
   const g1 = offline._getGame()
   const head1 = headOf(g1.foeDeployed[0])
 
-  await waitMyTurn()
   const r1 = await offline.fire({ row: head1.row, col: head1.col })
   check('打中机头 → 判定为 kill', () => assert.strictEqual(r1.result, RESULT.KILL))
   check('全部飞机被击毁 → win = true', () => assert.strictEqual(r1.win, true))
@@ -202,13 +223,10 @@ async function main() {
   /* ============ 5. 重复报点 / tick / 投降 ============ */
   section('[5] 重复报点拦截 / 回合超时 / 投降')
 
-  await newRoom(3)
-  await offline.deploy({ planes: toSubmit(randomDeploy(3, 'standard', BOARD_SIZE)) })
-
+  await startGame(3)
   const g2 = offline._getGame()
   const body = bodyOf(g2.foeDeployed[0])
 
-  await waitMyTurn()
   const r2 = await offline.fire({ row: body.row, col: body.col })
   check('打中非机头部位 → hit（不击毁）', () => assert.strictEqual(r2.result, RESULT.HIT))
   check('严格交替：出手后换手', () => assert.strictEqual(g2.myTurn, false))
@@ -238,9 +256,7 @@ async function main() {
   /* ============ 6. 页面取数字段映射（防结构漂移） ============ */
   section('[6] 页面字段映射（模拟 battle.js 取数）')
 
-  await newRoom(2)
-  await offline.deploy({ planes: toSubmit(randomDeploy(2, 'standard', BOARD_SIZE)) })
-  await waitMyTurn()
+  await startGame(2)
   const gg = offline._getGame()
   const head2 = headOf(gg.foeDeployed[1] || gg.foeDeployed[0])
   await offline.fire({ row: head2.row, col: head2.col })

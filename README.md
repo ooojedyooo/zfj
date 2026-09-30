@@ -242,7 +242,7 @@ cloudApi.js ─┤
 ```bash
 node scripts/test-core.js          # 22 项：形状 / 旋转 / 碰撞 / 判定 / 胜负 / 随机布阵
 node scripts/test-offline-flow.js  # 45 项：建房 → 布阵 → 开局 → 开火 → 结算 全链路
-node scripts/test-minigame.js      # 58 项：小游戏端渲染 + 触摸分发（桩 canvas/wx 跑真流程）
+node scripts/test-minigame.js      # 60 项：小游戏端渲染 + 触摸分发（桩 canvas/wx 跑真流程）
 node scripts/sync-shared.js        # 改完 miniprogram/{config,utils,services} 后必须重跑
 ```
 
@@ -255,6 +255,15 @@ node scripts/sync-shared.js        # 改完 miniprogram/{config,utils,services} 
 
 就能从大厅一路点到结算，顺带断言 T-08（敌方棋盘不出现 `plane` 格）、双棋盘不出屏、
 已炸格置灰不可再选等关键规则。
+
+### ⚠️ 写小游戏端测试的两个必踩坑
+
+1. **几何必须在「状态落定之后」再取**。回合切换会连带切换焦点（我方回合 → 敌盘放大 /
+   对方回合 → 我盘放大），`applyBattle` 检测到变化会重跑 `layout()`，棋盘的位置与尺寸都变了。
+   若提前把 `geo.foeBoard` 缓存下来，算出的像素点会落到别的格子上 ——
+   表现为「明明点了机头，却打到了镜像位置」，而且**只在先手是对方时复现**。
+2. **别用「累计绘制调用数」做断言**。主循环走 `setTimeout` 兜底，累计值随机器调度抖动会假失败。
+   正确做法是清零后渲染一帧，再断言这一帧画了什么（实测 375×667 下一个简单页面单帧约 57 次调用）。
 
 ---
 
@@ -308,7 +317,7 @@ node scripts/sync-shared.js        # 改完 miniprogram/{config,utils,services} 
 - [x] **离线引擎**：无云环境也能跑通完整对局（含 45 项集成测试）
 - [x] **社交**：分享邀战卡片、最近对手一键再邀、局内快捷表情、分享战报
 - [x] 小程序版工程（`miniprogram/`）—— 逻辑真源 + 参照实现
-- [x] **小游戏 Canvas 版工程**（`minigame/`）—— 5 场景 + 自研 UI 框架 + 58 项端到端测试
+- [x] **小游戏 Canvas 版工程**（`minigame/`）—— 5 场景 + 自研 UI 框架 + 60 项端到端测试
 - [ ] 体验版真机验收（需云环境就绪）
 - [ ] 上架资质与审核材料
 - [ ] V2：积分等级体系、多机型、道具系统

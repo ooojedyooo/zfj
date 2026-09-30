@@ -134,6 +134,11 @@ cloudApi.js ────┤
 对手由 `services/offlineGame.js` 驱动的本地 AI 扮演（会优先追打已命中格的相邻格），
 除对手是 AI 外，其余流程、界面与真实联机完全一致。
 
+> ⚠️ **`appid` 请保持 `touristappid`（游客模式）**。离线试玩不需要真 AppID，
+> 而且如果填入的是**小游戏账号**的 AppID，工具会按小游戏模式编译并报
+> 「`miniprogram/game.json` 未找到」（详见部署文档 FAQ）。
+> 若改了 `appid` 后报这个错，需要**移除项目后重新导入**才能生效。
+
 ### 方式二：接入云开发（真实双人对战）
 
 1. 把 `miniprogram/config/cloud.js` 的 `USE_CLOUD` 改回 `true`

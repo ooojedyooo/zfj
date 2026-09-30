@@ -70,7 +70,7 @@ class Deploy extends Scene {
     g.barY = L.safeTop + u(100)
 
     // 棋盘：先按宽度定，再按剩余高度收敛
-    const bottomH = L.safeBottom + u(24) + u(92) + u(20) + u(72) + u(24) + u(150)
+    const bottomH = L.safeBottom + u(24) + u(92) + u(20) + u(72) + u(24) + u(178)
     const availH = L.H - g.barY - u(40) - bottomH
     const byW = w - pad * 2
     const size = Math.max(u(300), Math.min(byW, availH))
@@ -78,7 +78,7 @@ class Deploy extends Scene {
 
     let y = g.board.y + size + pad * 2 + u(28)
     g.cardY = y
-    g.cardH = u(150)
+    g.cardH = u(178)
 
     y += g.cardH + u(24)
     g.opsY = y
@@ -118,7 +118,8 @@ class Deploy extends Scene {
     const m = createMatrix(BOARD_SIZE, '')
     this.placed.forEach(function (p) {
       p.cells.forEach(function (c) {
-        m[c.row - 1][c.col - 1] = 'plane'
+        // 机头单独标出来，玩家才看得出这架飞机朝哪边（旋转/推演都靠它）
+        m[c.row - 1][c.col - 1] = c.isHead ? 'head' : 'plane'
       })
     })
     return m
@@ -132,7 +133,13 @@ class Deploy extends Scene {
     const g = this.geo
     const c = theme.color
 
-    draw.text(ctx, '点击棋盘放置飞机 · 锚点为机头', g.x, g.barY, {
+    // 顶部提示：随进度变化，明确告诉玩家「现在该做什么」
+    const tip = (this.waiting || this.readying)
+      ? '等待对手就绪…'
+      : (this.placed.length >= this.planeCount
+          ? '已放满 ' + this.planeCount + ' 架 · 点「就绪」开始'
+          : '点棋盘放第 ' + (this.placed.length + 1) + ' / ' + this.planeCount + ' 架 · 落点即机头')
+    draw.text(ctx, tip, g.x, g.barY, {
       size: u(theme.size.small), color: c.textMuted
     })
     const urgent = this.countdown <= 10
@@ -154,14 +161,23 @@ class Deploy extends Scene {
     const card = { x: g.x, y: g.cardY, w: g.w, h: g.cardH }
     draw.fillRect(ctx, card.x, card.y, card.w, card.h, c.card, u(theme.radius.lg))
     draw.strokeRect(ctx, card.x, card.y, card.w, card.h, c.border, u(theme.radius.lg), 1)
-    draw.text(ctx, '飞机数量', card.x + u(28), card.y + u(52), { size: u(theme.size.body), color: c.text })
-    draw.text(ctx, this.placed.length + ' / ' + this.planeCount, card.x + card.w - u(28), card.y + u(52), {
+    draw.text(ctx, '已放置飞机', card.x + u(28), card.y + u(50), { size: u(theme.size.body), color: c.text })
+    draw.text(ctx, this.placed.length + ' / ' + this.planeCount, card.x + card.w - u(28), card.y + u(50), {
       size: u(theme.size.body), color: c.text, weight: 500, align: 'right'
     })
-    draw.line(ctx, card.x + u(28), card.y + u(84), card.x + card.w - u(28), card.y + u(84), c.border, 1)
-    draw.text(ctx, '当前朝向', card.x + u(28), card.y + u(116), { size: u(theme.size.body), color: c.text })
-    draw.text(ctx, ROTATION_LABEL[this.rotation], card.x + card.w - u(28), card.y + u(116), {
+    draw.line(ctx, card.x + u(28), card.y + u(82), card.x + card.w - u(28), card.y + u(82), c.border, 1)
+
+    // 有飞机时显示「最近一架」的朝向（旋转按钮作用的对象），没有则显示下一架的朝向
+    const hasPlane = this.placed.length > 0
+    draw.text(ctx, hasPlane ? '最近一架朝向' : '下一架朝向', card.x + u(28), card.y + u(114), {
+      size: u(theme.size.body), color: c.text
+    })
+    draw.text(ctx, ROTATION_LABEL[this.rotation], card.x + card.w - u(28), card.y + u(114), {
       size: u(theme.size.h3), color: c.primaryDark, weight: 500, align: 'right'
+    })
+
+    draw.text(ctx, '点棋盘放置 · 点已放置的飞机可移除', card.x + u(28), card.y + u(154), {
+      size: u(theme.size.tiny), color: c.textMuted
     })
 
     const labels = ['旋转', '随机布阵', '清空']
@@ -185,16 +201,31 @@ class Deploy extends Scene {
   /* ---------------- 棋盘交互 ---------------- */
 
   onBoardTap(row, col) {
-    if (this.placed.length >= this.planeCount) {
-      this.app.toast('飞机已全部放置')
+    if (this.waiting || this.readying) return
+
+    // ① 点到已放置的飞机 → 移除它（可以单独调整某一架，不必整盘清空重来）
+    const hitIdx = this.placed.findIndex(function (p) {
+      return p.cells.some(function (c) { return c.row === row && c.col === col })
+    })
+    if (hitIdx >= 0) {
+      this.placed.splice(hitIdx, 1)
+      this.app.toast('已移除第 ' + (hitIdx + 1) + ' 架，可重新放置')
       return
     }
+
+    // ② 已放满 → 明确告知下一步该做什么
+    if (this.placed.length >= this.planeCount) {
+      this.app.toast('已放满 ' + this.planeCount + ' 架，点「就绪」开始对局')
+      return
+    }
+
+    // ③ 放新的一架（落点 = 机头）
     const cells = getAbsoluteCells('standard', row, col, this.rotation)
     const occupied = this.placed.reduce(function (acc, p) { return acc.concat(p.cells) }, [])
     const check = validatePlacement(cells, occupied)
 
     if (!check.ok) {
-      this.app.toast(check.reason === 'overlap' ? '与其他飞机重叠' : '超出棋盘边界')
+      this.app.toast(check.reason === 'overlap' ? '这里与已有飞机重叠' : '这里放不下，会超出棋盘')
       return
     }
     this.placed.push({
@@ -204,11 +235,42 @@ class Deploy extends Scene {
       rotation: this.rotation,
       cells: cells
     })
+    this.app.toast('已放置第 ' + this.placed.length + ' 架')
   }
 
+  /**
+   * 旋转
+   * 已有飞机时就旋转「最近放下的那一架」（原地转，最符合直觉）；
+   * 一架都还没放时，旋转的是「下一架」的待放置朝向。
+   */
   onRotate() {
-    if (this.waiting) return
-    this.rotation = (this.rotation + 1) % 4
+    if (this.waiting || this.readying) return
+
+    const idx = this.placed.length - 1
+    if (idx < 0) {
+      this.rotation = (this.rotation + 1) % 4
+      this.app.toast('下一架朝向：' + ROTATION_LABEL[this.rotation])
+      return
+    }
+
+    const p = this.placed[idx]
+    const rot = (p.rotation + 1) % 4
+    const cells = getAbsoluteCells(p.planeId, p.anchorRow, p.anchorCol, rot)
+    const others = []
+    this.placed.forEach(function (q, i) {
+      if (i !== idx) others.push.apply(others, q.cells)
+    })
+
+    const check = validatePlacement(cells, others)
+    if (!check.ok) {
+      this.app.toast(check.reason === 'overlap' ? '转过去会压到别的飞机' : '转过去会超出棋盘')
+      return
+    }
+
+    p.rotation = rot
+    p.cells = cells
+    this.rotation = rot   // 下一架沿用当前朝向，连放多架同一方向更省事
+    this.app.toast('第 ' + (idx + 1) + ' 架朝向 ' + ROTATION_LABEL[rot])
   }
 
   onRandom() {

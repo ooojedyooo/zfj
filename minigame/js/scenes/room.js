@@ -214,11 +214,15 @@ class Room extends Scene {
       })
     } else {
       ui.row(ctx, L, card.x + u(28), g.rowPlane.y, card.w - u(56), '飞机数量', String(this.planeCount))
+      // 加减给个圆底，否则两个孤零零的符号不像按钮，玩家根本想不到可以调
+      const cr = g.minus.w / 2
+      draw.circle(ctx, g.minus.x + cr, g.minus.y + cr, cr, c.gray)
+      draw.circle(ctx, g.plus.x + cr, g.plus.y + cr, cr, c.gray)
       draw.text(ctx, '−', g.minus.x + g.minus.w / 2, g.minus.y + g.minus.h / 2, {
-        size: u(theme.size.h3), color: c.primaryDark, align: 'center'
+        size: u(theme.size.h2), color: c.primaryDark, align: 'center'
       })
       draw.text(ctx, '＋', g.plus.x + g.plus.w / 2, g.plus.y + g.plus.h / 2, {
-        size: u(theme.size.h3), color: c.primaryDark, align: 'center'
+        size: u(theme.size.h2), color: c.primaryDark, align: 'center'
       })
 
       if (this.mode === 'create') {

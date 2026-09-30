@@ -26,13 +26,17 @@ module.exports = {
     gray: '#F1EFE8',
 
     // 棋盘
+    // 注意：格线原来是 #E6E8EB + 0.5px，在白底上几乎看不见，实战里数不清格子。
+    // 这里整体加深一档，并给底板加描边，让棋盘边界与 9×9 格位一眼可辨。
     boardBg: '#FFFFFF',
-    gridLine: '#E6E8EB',
+    boardFrame: '#C7D0DA',
+    gridLine: '#B9C5D1',
     cellEmpty: '#FFFFFF',
-    plane: '#B5D4F4',
-    planeBody: '#378ADD',
-    miss: '#D3D1C7',
-    disabled: '#F1EFE8',
+    plane: '#378ADD',        // 机体：实心蓝，与白色底板对比明确
+    planeHead: '#0C447C',    // 机头：再深一档 + 白点标记，一眼看出朝向
+    planeSelected: '#185FA5',
+    miss: '#B9B7AD',
+    disabled: '#EAE8E1',
 
     // 蒙层
     mask: 'rgba(12, 68, 124, 0.92)'

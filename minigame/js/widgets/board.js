@@ -1,8 +1,9 @@
 // minigame/js/widgets/board.js
 // 9×9 棋盘控件 —— 小游戏版，行为对齐 miniprogram/components/board-grid
 //
-// cells 取值：'' | 'plane' | 'hit' | 'kill' | 'miss'
-//   plane → 我方飞机
+// cells 取值：'' | 'plane' | 'head' | 'hit' | 'kill' | 'miss'
+//   plane → 我方飞机机体
+//   head  → 我方飞机机头（单独配色 + 白点，用来一眼看出朝向）
 //   hit   → 被击中（非机头）
 //   kill  → 机头被击中，整机击毁
 //   miss  → 未击中
@@ -64,17 +65,26 @@ function render(ctx, o, u) {
   const pad = u ? u(PAD) : PAD
   const cell = m.cell
 
-  // 底板
-  draw.fillRect(ctx, m.x - pad, m.y - pad, m.size + pad * 2, m.size + pad * 2, c.boardBg, theme.radius.lg)
+  // 底板（加描边：白底与浅灰页面背景对比太弱，不描边会看不出棋盘边界）
+  const ox = m.x - pad
+  const oy = m.y - pad
+  const ow = m.size + pad * 2
+  const oh = m.size + pad * 2
+  draw.fillRect(ctx, ox, oy, ow, oh, c.boardBg, theme.radius.lg)
+  draw.strokeRect(ctx, ox, oy, ow, oh, c.boardFrame, theme.radius.lg, 1)
 
-  // 网格线
+  // 网格线（1px + 加深色：原来 0.5px 的浅灰在白底上几乎不可见）
   for (let i = 0; i <= BOARD_SIZE; i++) {
     const off = i * cell
-    draw.line(ctx, m.x, m.y + off, m.x + m.size, m.y + off, c.gridLine, 0.5)
-    draw.line(ctx, m.x + off, m.y, m.x + off, m.y + m.size, c.gridLine, 0.5)
+    draw.line(ctx, m.x, m.y + off, m.x + m.size, m.y + off, c.gridLine, 1)
+    draw.line(ctx, m.x + off, m.y, m.x + off, m.y + m.size, c.gridLine, 1)
   }
 
-  const inset = Math.max(1, cell * 0.08)
+  // 外圈再压一道，棋盘边界更实在
+  draw.strokeRect(ctx, m.x, m.y, m.size, m.size, c.boardFrame, 0, 1.5)
+
+  // 内部留缝不要太大，否则 10 格飞机会被切成 10 个小方块、看不出是一架飞机
+  const inset = Math.max(0.5, cell * 0.03)
 
   for (let r = 1; r <= BOARD_SIZE; r++) {
     const row = (o.cells && o.cells[r - 1]) || []
@@ -87,16 +97,21 @@ function render(ctx, o, u) {
       const cx = x + cell / 2
       const cy = y + cell / 2
 
-      if (state === 'plane') {
-        draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, c.plane, cell * 0.16)
+      if (state === 'plane' || state === 'head') {
+        const fill = state === 'head' ? c.planeHead : c.plane
+        draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, fill, cell * 0.1)
+        if (state === 'head') {
+          // 机头白点：朝向一眼可辨
+          draw.circle(ctx, cx, cy, Math.max(1.5, cell * 0.14), '#FFFFFF')
+        }
       } else if (state === 'hit') {
-        draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, c.hitLight, cell * 0.16)
-        draw.circle(ctx, cx, cy, cell * 0.22, c.hit)
+        draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, c.hitLight, cell * 0.1)
+        draw.circle(ctx, cx, cy, cell * 0.26, c.hit)
       } else if (state === 'kill') {
-        draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, c.danger, cell * 0.16)
-        draw.circle(ctx, cx, cy, cell * 0.2, '#FFFFFF')
+        draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, c.danger, cell * 0.1)
+        draw.circle(ctx, cx, cy, cell * 0.22, '#FFFFFF')
       } else if (state === 'miss') {
-        draw.circle(ctx, cx, cy, cell * 0.14, c.miss)
+        draw.circle(ctx, cx, cy, cell * 0.18, c.miss)
       }
     }
   }
@@ -106,8 +121,8 @@ function render(ctx, o, u) {
   if (sel && o.selectable) {
     const x = m.x + (sel.col - 1) * cell
     const y = m.y + (sel.row - 1) * cell
-    draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, c.primaryLight, cell * 0.16)
-    draw.strokeRect(ctx, x + 1, y + 1, cell - 2, cell - 2, c.primary, cell * 0.16, Math.max(1.5, cell * 0.1))
+    draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, c.primaryLight, cell * 0.1)
+    draw.strokeRect(ctx, x + 1, y + 1, cell - 2, cell - 2, c.primary, cell * 0.1, Math.max(2, cell * 0.12))
   }
 }
 

@@ -226,6 +226,15 @@ async function main() {
   const room = app.scene
   check('房间默认 create 模式', function () { assert.strictEqual(room.mode, 'create') })
   check('房间场景可渲染', function () { app.renderOnce() })
+  check('房间页可调节飞机数量（1~3）', function () {
+    assert.ok(room.geo.plus && room.geo.minus, '加减按钮未注册')
+    const before = room.planeCount
+    tapRect(room.geo.plus)
+    assert.strictEqual(room.planeCount, before + 1, '加号无效')
+    tapRect(room.geo.minus)
+    assert.strictEqual(room.planeCount, before, '减号无效')
+    assert.ok(room.planeCount >= 1 && room.planeCount <= 3)
+  })
 
   /* ---------- 4. 创建房间 → 等待 → 对手就位 ---------- */
   section('[4] 创建房间 → 对手加入 → 布阵')
@@ -258,30 +267,73 @@ async function main() {
     assert.ok(deploy.zones.length >= BOARD_SIZE * BOARD_SIZE, '实际 ' + deploy.zones.length)
   })
   check('布阵场景可渲染', function () { app.renderOnce() })
-
-  // 点棋盘放一架（锚点 = 机头）
-  const anchor = Board.cellRect({ x: board.x, y: board.y, size: board.size }, 3, 3)
-  tapRect(anchor)
-  check('点击棋盘成功放置飞机', function () { assert.strictEqual(deploy.placed.length, 1) })
-  check('放置位置与点击格一致', function () {
-    const p = deploy.placed[0]
-    assert.strictEqual(p.anchorRow, 3)
-    assert.strictEqual(p.anchorCol, 3)
+  check('布阵页各区块不重叠且不出屏', function () {
+    const L = app.layout
+    const gg = deploy.geo
+    assert.ok(gg.board.y + gg.board.size <= gg.cardY + 0.01, '棋盘压到信息卡')
+    assert.ok(gg.cardY + gg.cardH <= gg.opsY + 0.01, '信息卡压到操作按钮')
+    assert.ok(gg.opsY + gg.opsH <= gg.readyBtn.y + 0.01, '操作按钮压到就绪按钮')
+    assert.ok(gg.readyBtn.y + gg.readyBtn.h <= L.H, '就绪按钮出屏')
+    gg.opRects.forEach(function (r) {
+      assert.ok(r.x >= 0 && r.x + r.w <= L.W, '操作按钮横向出屏')
+    })
   })
 
-  // 再点同一处应被拒绝（重叠）
-  tapRect(anchor)
-  check('重叠位置被拒绝', function () { assert.strictEqual(deploy.placed.length, 1) })
+  // ① 非法位置应被拒绝（机头朝上时机体向下延伸，靠近下边缘会出界）
+  const outRect = Board.cellRect({ x: board.x, y: board.y, size: board.size }, 8, 3)
+  tapRect(outRect)
+  check('越界位置被拒绝', function () {
+    assert.strictEqual(deploy.placed.length, 0, '越界却放上了：' + deploy.placed.length)
+  })
 
-  // 清空 + 随机
+  // ② 正常放置（落点 = 机头）
+  const anchor = Board.cellRect({ x: board.x, y: board.y, size: board.size }, 5, 5)
+  tapRect(anchor)
+  check('点击棋盘成功放置飞机', function () { assert.strictEqual(deploy.placed.length, 1) })
+  check('放置位置与点击格一致（落点即机头）', function () {
+    const p = deploy.placed[0]
+    assert.strictEqual(p.anchorRow, 5)
+    assert.strictEqual(p.anchorCol, 5)
+    const head = p.cells.filter(function (c) { return c.isHead })[0]
+    assert.strictEqual(head.row, 5)
+    assert.strictEqual(head.col, 5)
+  })
+  check('机头单独渲染（1 个 head + 9 个 plane）', function () {
+    const flat = deploy.cells().reduce(function (a, r) { return a.concat(r) }, [])
+    assert.strictEqual(flat.filter(function (s) { return s === 'head' }).length, 1)
+    assert.strictEqual(flat.filter(function (s) { return s === 'plane' }).length, 9)
+  })
+
+  // ③ 点已放置的飞机 → 移除（可以单独调整某一架，不必整盘清空）
+  tapRect(anchor)
+  check('点已放置的飞机可移除', function () {
+    assert.strictEqual(deploy.placed.length, 0, '点已放置的飞机没有移除')
+  })
+
+  // ④ 重新放置后旋转：应作用于「最近一架」并原地转向
+  tapRect(anchor)
+  check('重新放置成功', function () { assert.strictEqual(deploy.placed.length, 1) })
+  const rotBefore = deploy.placed[0].rotation
+  tapRect(deploy.geo.opRects[0])
+  check('「旋转」原地旋转最近一架飞机', function () {
+    assert.strictEqual(deploy.placed[0].rotation, (rotBefore + 1) % 4,
+      '朝向没变：' + rotBefore + ' → ' + deploy.placed[0].rotation)
+  })
+  check('旋转后仍是完整 10 格且机头不跑位', function () {
+    const p = deploy.placed[0]
+    assert.strictEqual(p.cells.length, 10)
+    const head = p.cells.filter(function (c) { return c.isHead })[0]
+    assert.strictEqual(head.row, 5)
+    assert.strictEqual(head.col, 5)
+  })
+
+  // ⑤ 清空 / 随机布阵
   tapRect(deploy.geo.opRects[2])
   check('「清空」生效', function () { assert.strictEqual(deploy.placed.length, 0) })
   tapRect(deploy.geo.opRects[1])
   check('「随机布阵」按数量放满', function () {
     assert.strictEqual(deploy.placed.length, deploy.planeCount)
   })
-  tapRect(deploy.geo.opRects[0])
-  check('「旋转」切换朝向', function () { assert.ok(deploy.rotation >= 0 && deploy.rotation <= 3) })
 
   // 就绪
   tapRect(deploy.geo.readyBtn)
@@ -297,13 +349,17 @@ async function main() {
   check('已回传我方布阵用于渲染我方海域', function () {
     assert.ok(battle.myDeploy.length >= 1)
   })
-  check('我方海域渲染出飞机格', function () {
+  check('我方海域渲染出飞机格（机体 + 机头）', function () {
     const flat = battle.myCells().reduce(function (a, row) { return a.concat(row) }, [])
-    assert.ok(flat.filter(function (s) { return s === 'plane' }).length >= 10, '我方飞机格不足 10')
+    const heads = flat.filter(function (s) { return s === 'head' }).length
+    const bodies = flat.filter(function (s) { return s === 'plane' }).length
+    assert.ok(bodies + heads >= 10, '我方飞机格不足 10，实际 ' + (bodies + heads))
+    assert.strictEqual(heads, battle.planeCount, '机头格数应等于我方飞机数')
   })
   check('敌方海域不显示对方飞机（T-08）', function () {
     const flat = battle.foeCells().reduce(function (a, row) { return a.concat(row) }, [])
-    assert.ok(flat.indexOf('plane') < 0, '敌方棋盘泄露了飞机格')
+    assert.ok(flat.indexOf('plane') < 0, '敌方棋盘泄露了飞机机体')
+    assert.ok(flat.indexOf('head') < 0, '敌方棋盘泄露了机头')
   })
   check('对战场景可渲染', function () { app.renderOnce() })
 

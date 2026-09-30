@@ -410,7 +410,8 @@ class Battle extends Scene {
     const m = createMatrix(BOARD_SIZE, '')
     ;(this.myDeploy || []).forEach(function (p) {
       const abs = getAbsoluteCells(p.planeId, p.anchorRow, p.anchorCol, p.rotation)
-      abs.forEach(function (cell) { m[cell.row - 1][cell.col - 1] = 'plane' })
+      // 自己的飞机自己当然看得见，机头单独标出，便于推演对方机头可能在的位置
+      abs.forEach(function (cell) { m[cell.row - 1][cell.col - 1] = cell.isHead ? 'head' : 'plane' })
     })
     const inc = this.incoming || {}
     Object.keys(inc).forEach(function (k) {

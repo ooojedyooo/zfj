@@ -9,6 +9,10 @@
 //     trimmed  这一架有格子在棋盘外 → 界内可见部分加红色描边（边界被切断了）
 //     conflict 这一格被两架及以上同时占用 → 深红 + 白斜线
 //              半透明叠在一起只会变深一点，看不出「这里有两架」
+//     stack    这一格落了几架（≥2 就是重叠）。**机头格靠它换成「白底牌 + 红字」**：
+//              普通机头是「色块 + 白字」，正负关系一反，不用角标也能看出这格不止一架；
+//              牌上的数字是「现在选中的是第几架」，点一下切换它就变 —— 这是重叠时
+//              判断「自己选的是哪一架」的唯一依据，所以机头格不画斜线（会划花数字）
 //   plane → 我方飞机机体
 //   head  → 我方飞机机头（有 p 时印序号，无 p 时印白点）
 //   hit   → 被击中（非机头）
@@ -90,13 +94,16 @@ function layout(scene, o, onCellTap) {
 /** cells 的元素规范化：字符串 → { s, p, bad, trimmed, conflict } */
 function normCell(v) {
   if (!v) return null
-  if (typeof v === 'string') return { s: v, p: -1, bad: false, trimmed: false, conflict: false }
+  if (typeof v === 'string') {
+    return { s: v, p: -1, bad: false, trimmed: false, conflict: false, stack: 1 }
+  }
   return {
     s: v.s,
     p: (v.p == null ? -1 : v.p),
     bad: !!v.bad,
     trimmed: !!v.trimmed,
-    conflict: !!v.conflict
+    conflict: !!v.conflict,
+    stack: v.stack || 1
   }
 }
 
@@ -208,10 +215,25 @@ function render(ctx, o, u) {
           if (pal) {
             // 有身份色 → 印序号：颜色负责扫一眼，序号负责确认「是第几架」
             // 序号不在半透明层里，飞机变虚了它也要一直读得清
-            draw.text(ctx, String(info.p + 1), cx, cy + cell * 0.02, {
-              size: cell * 0.52, weight: 600, color: '#FFFFFF',
-              align: 'center', baseline: 'middle'
-            })
+            if (info.stack > 1) {
+              // 几架机头叠在同一格。
+              // 普通机头是「色块 + 白字」，这里换成「白底牌 + 深色字」——
+              // 同一套颜色换了正负关系，扫一眼就知道「这一格不止一架」，
+              // 不需要额外的角标或说明文字。
+              const bs = cell * 0.66
+              draw.fillRect(ctx, cx - bs / 2, cy - bs / 2, bs, bs, c.boardBg, bs * 0.2)
+              draw.strokeRect(ctx, cx - bs / 2, cy - bs / 2, bs, bs, c.danger,
+                bs * 0.2, Math.max(1.2, cell * 0.07))
+              draw.text(ctx, String(info.p + 1), cx, cy + cell * 0.02, {
+                size: cell * 0.44, weight: 700, color: c.danger,
+                align: 'center', baseline: 'middle'
+              })
+            } else {
+              draw.text(ctx, String(info.p + 1), cx, cy + cell * 0.02, {
+                size: cell * 0.52, weight: 600, color: '#FFFFFF',
+                align: 'center', baseline: 'middle'
+              })
+            }
           } else {
             // 无身份色（对战阶段）→ 白点标记朝向
             draw.circle(ctx, cx, cy, Math.max(1.5, cell * 0.14), '#FFFFFF')
@@ -227,7 +249,10 @@ function render(ctx, o, u) {
 
         // 冲突格：两架及以上压在同一格。深红 + 白斜线，不透明，压在最上层。
         // 两层半透明叠一起只会「再深一点」，看不出是两架 —— 斜线才说得清。
-        if (info.conflict) {
+        //
+        // 机头格例外：那里已经有「白底牌 + 红字」的叠层表达，再划一道斜线
+        // 只会把序号划花，而序号是判断「现在选的是哪一架」的唯一依据。
+        if (info.conflict && !isHead) {
           draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2,
             c.conflict, cell * 0.1)
           hatch(ctx, x, y, cell, c.conflictLine, Math.max(1, cell * 0.06))

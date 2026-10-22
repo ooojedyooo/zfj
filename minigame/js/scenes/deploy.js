@@ -29,13 +29,29 @@
 //   点空白格  → 放一架（落点 = 机头）；若已有选中，先退出选中，不误放
 //   点机头    → 选中这一架；已选中时再点一次 = 以机头为轴旋转 90°
 //   点机体    → 同样选中（命中判定放宽，手指比格子粗）
-//             → 重叠处再点一下 = 在叠着的几架之间轮换选中
+//             → 重叠处再点一下 = 在叠着的几架之间轮换选中（见下「重叠」）
 //   按住机头拖 → 整架跟着走，松手就地落下（不问合不合法）
 //   点状态条棋子 → 直接选中那一架
 //
 // 为什么「先选中再旋转」而不是「点一下直接转」：
 //   拖拽的起手式就是按住机头，手指自然会先位移 3~8px。
 //   若点一下就转，玩家每次想拖都会先把飞机转歪。选中态是这层安全垫。
+//
+// ============================================================================
+// 【重叠：怎么知道现在选的是哪一架】
+//
+// 机头重合时，两架飞机的抓手、旋转轴、描边全在同一个像素上，
+// 画面上唯一的差别就是机头牌里的那个数字。所以三件事必须同时成立：
+//
+//   ① **看得出这格不止一架**：机头牌从「色块 + 白字」反转成「白底 + 红字」。
+//      同一套颜色换正负关系，不用加角标，扫一眼就不一样。
+//   ② **牌上是「当前选中那架」的编号**，点一下切换它就变（★ 这是唯一的信号）
+//   ③ **点按只切换、不旋转**：重叠态下旋转结果不可预期（转完可能还叠着），
+//      而且轮换和旋转抢同一个手势，必然有一个永远触发不了。
+//      要转就点操作栏的「旋转」，那里没有歧义。
+//
+// 拖动同理：**优先抓当前选中的那架**。否则永远只能抓住后放的那架，
+// 先放的怎么拖都拖不动 —— 而重叠恰恰是最需要拖开的时刻。
 const Scene = require('./base')
 const theme = require('../core/theme')
 const draw = require('../core/draw')
@@ -55,6 +71,15 @@ const ROTATION_LABEL = ['↑', '→', '↓', '←']
 /** 某个格位是否在棋盘之外（飞机允许部分探出棋盘，但机头必须在内） */
 function outsideCell(c) {
   return c.row < 1 || c.row > BOARD_SIZE || c.col < 1 || c.col > BOARD_SIZE
+}
+
+/** 取一架飞机的机头格（cells 里 isHead 为真的那个） */
+function headCellOf(p) {
+  if (!p) return null
+  for (let i = 0; i < p.cells.length; i++) {
+    if (p.cells[i].isHead) return p.cells[i]
+  }
+  return null
 }
 
 class Deploy extends Scene {
@@ -279,6 +304,17 @@ class Deploy extends Scene {
   cells() {
     const m = createMatrix(BOARD_SIZE, '')
     const a = this.audit()
+
+    // 一格落了几架（含机头）：机头格靠它换成「白底牌 + 红字」，见 board.js
+    const stack = {}
+    this.placed.forEach(function (p) {
+      p.cells.forEach(function (c) {
+        if (outsideCell(c)) return
+        const k = c.row + ',' + c.col
+        stack[k] = (stack[k] || 0) + 1
+      })
+    })
+
     this.placed.forEach(function (p, i) {
       // 出界 / 压到别人 → 这一架整体标「不合规」（画成半透明）。
       // 「整架」而不是「只标冲突的那几格」：玩家要判断的是「这一架能不能用」，
@@ -288,15 +324,33 @@ class Deploy extends Scene {
       p.cells.forEach(function (c) {
         // 出界的格直接不画。画在棋盘范围外会糊到倒计时、状态条上。
         if (outsideCell(c)) return
+        const k = c.row + ',' + c.col
         m[c.row - 1][c.col - 1] = {
           s: c.isHead ? 'head' : 'plane',
           p: i,
           bad: bad,
           trimmed: trimmed,
-          conflict: !!a.conflict[c.row + ',' + c.col]
+          conflict: !!a.conflict[k],
+          stack: stack[k] || 1
         }
       })
     })
+
+    // 机头重叠时「牌上写谁的数字」：优先写**当前选中**的那一架。
+    //
+    // 不这么做就会出现最糟的一种情况：玩家点了一下，选择其实已经换到另一架了，
+    // 但牌上数字没变（因为后放的那架覆盖了先放的），于是一模一样的画面里
+    // 他自己也说不清现在选的是哪一架。数字变化就是这条唯一的信号。
+    const sel = this.selected
+    if (sel >= 0 && sel < this.placed.length) {
+      const hc = headCellOf(this.placed[sel])
+      if (hc && !outsideCell(hc)) {
+        const cur = m[hc.row - 1][hc.col - 1]
+        if (cur && cur.s === 'head' && cur.stack > 1) {
+          m[hc.row - 1][hc.col - 1] = Object.assign({}, cur, { p: sel })
+        }
+      }
+    }
     return m
   }
 
@@ -383,9 +437,17 @@ class Deploy extends Scene {
       if (d.valid) tip = '松手就把第 ' + (d.idx + 1) + ' 架放到这里'
       else tip = this.dragReasonText(d) + ' · 松手也先放这儿'
     } else if (this.selected >= 0) {
-      tip = '第 ' + (this.selected + 1) + ' 架已选中 · 再点机头旋转'
+      const stacked = this.headStackOf(this.selected)
+      tip = stacked > 1
+        // 机头重叠时，旋转是没法预期的（转完可能还叠着），所以点按只切换选择。
+        // 文案必须说清这一点，否则「点了一下没转」会被当成坏了。
+        ? '第 ' + (this.selected + 1) + ' 架已选中 · 此格叠了 ' + stacked + ' 架，点它切换'
+        : '第 ' + (this.selected + 1) + ' 架已选中 · 再点机头旋转'
     } else if (pending > 0) {
-      tip = pending + ' 架位置不合规 · 点红格可调'
+      const ov = this.headOverlaps()
+      tip = ov.length
+        ? '第 ' + ov.map(function (i) { return i + 1 }).join('、') + ' 架机头重叠 · 点该格切换'
+        : pending + ' 架位置不合规 · 点红格可调'
     } else if (this.placed.length >= this.planeCount) {
       tip = '已放满 ' + this.planeCount + ' 架 · 点「就绪」开始'
     } else {
@@ -537,22 +599,50 @@ class Deploy extends Scene {
     return out
   }
 
+  /**
+   * 这一架的机头格上还叠了几架（含自己）
+   * > 1 就是「机头重合」—— 此时点按只切换选择、不旋转，理由见 onBoardTap
+   */
+  headStackOf(idx) {
+    const h = headCellOf(this.placed[idx])
+    if (!h) return 0
+    return this.planesAt(h.row, h.col).length
+  }
+
+  /** 机头被重叠占用的那几架（返回 0-based 下标），用来提示「点该格切换」 */
+  headOverlaps() {
+    const self = this
+    const out = []
+    this.placed.forEach(function (p, i) {
+      const h = headCellOf(p)
+      if (!h || outsideCell(h)) return
+      if (self.planesAt(h.row, h.col).length > 1) out.push(i)
+    })
+    return out
+  }
+
   onBoardTap(row, col) {
     if (this.waiting || this.readying) return
 
     const hits = this.planesAt(row, col)
 
     if (hits.length) {
-      let pick = hits[0]
-      // 重叠处：再点一次轮到下一架。不然压在下面那架永远选不到 ——
+      // 重叠处：点一下在叠着的几架之间轮换。不然压在下面那架永远选不到 ——
       // 它被遮住、被标红，只能从状态条进去，等于把问题藏起来了。
       if (hits.length > 1) {
         let cur = -1
         for (let i = 0; i < hits.length; i++) {
           if (hits[i].idx === this.selected) { cur = i; break }
         }
-        if (cur >= 0) pick = hits[(cur + 1) % hits.length]
+        const pick = hits[(cur + 1) % hits.length]
+        this.selected = pick.idx
+        this.rotation = this.placed[pick.idx].rotation
+        // 切换本身不需要重复 toast：机头牌上的数字变了、顶部文案变了、
+        // 状态条对应棋子亮了，三个通道同时响应，再弹一句就是噪音。
+        return
       }
+
+      const pick = hits[0]
       // 已选中这一架 + 点的是机头 → 以机头为轴旋转
       if (pick.isHead && this.selected === pick.idx) {
         this.rotatePlane(pick.idx)
@@ -625,8 +715,15 @@ class Deploy extends Scene {
     if (!cell) return
     const hits = this.planesAt(cell.row, cell.col)
     let owner = null
+    // 优先抓**当前选中**的那架：几架机头叠在同一格时，如果不看选中态，
+    // 永远只能抓住后放的那架，先放的怎么拖都拖不动 —— 而重叠恰恰是最需要拖开的时刻。
     for (let i = 0; i < hits.length; i++) {
-      if (hits[i].isHead) { owner = hits[i]; break }
+      if (hits[i].isHead && hits[i].idx === this.selected) { owner = hits[i]; break }
+    }
+    if (!owner) {
+      for (let i = 0; i < hits.length; i++) {
+        if (hits[i].isHead) { owner = hits[i]; break }
+      }
     }
     if (!owner) return   // 机头是这架飞机的「抓手」
 

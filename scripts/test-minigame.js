@@ -588,6 +588,52 @@ async function main() {
     assert.deepStrictEqual(order, [2, 1, 0], '轮换顺序不对：' + order.join(','))
   })
 
+  // 机头重合：两架的抓手、旋转轴、描边全在同一个像素上，
+  // 画面上唯一的差别就是机头牌里的那个数字 —— 所以点一下必须让它变，
+  // 而且不能顺手旋转（重叠态转完可能还叠着，且会和「点一下切换」抢同一个手势）
+  check('机头重叠时点机头 = 切换选择不旋转，机头牌换成选中那架的编号', function () {
+    deploy.placed = []
+    deploy.placed.push({
+      planeId: 'standard', anchorRow: 5, anchorCol: 5, rotation: 0,
+      cells: getAbsoluteCells('standard', 5, 5, 0)
+    })
+    deploy.placed.push({
+      planeId: 'standard', anchorRow: 5, anchorCol: 5, rotation: 1,
+      cells: getAbsoluteCells('standard', 5, 5, 1)
+    })
+    deploy.selected = -1
+    app.renderOnce()
+
+    deploy.onBoardTap(5, 5)
+    assert.strictEqual(deploy.selected, 1, '第一次点没选中后放的那架：' + deploy.selected)
+    let head = deploy.cells()[4][4]
+    assert.strictEqual(head.s, 'head', '重叠处没画成机头：' + head.s)
+    assert.ok(head.stack > 1, '机头格没标出「叠了几架」：stack=' + head.stack)
+    assert.strictEqual(head.p, 1, '机头牌写的不是选中架的编号：' + head.p)
+
+    const rot = [deploy.placed[0].rotation, deploy.placed[1].rotation]
+    deploy.onBoardTap(5, 5)
+    assert.strictEqual(deploy.selected, 0, '没有轮换到另一架：' + deploy.selected)
+    assert.deepStrictEqual([deploy.placed[0].rotation, deploy.placed[1].rotation], rot,
+      '重叠处点按顺手把飞机转了 —— 这一步只该切换选择')
+    head = deploy.cells()[4][4]
+    assert.strictEqual(head.p, 0, '切换后机头牌没换成第 1 架的编号：' + head.p)
+    app.renderOnce()
+  })
+
+  check('机头重叠时，按住拖抓的是选中那架（不是永远后放的）', function () {
+    deploy.selected = 0
+    const r = Board.cellRect(deploy.geo.board, 5, 5)
+    deploy.onTouchStart(r.x + r.w / 2, r.y + r.h / 2)
+    assert.ok(deploy._press, '没进入待拖状态')
+    assert.strictEqual(deploy._press.idx, 0,
+      '抓到了第 ' + (deploy._press.idx + 1) + ' 架，不是选中的第 1 架')
+    deploy._press = null
+    deploy.selected = -1
+    deploy.placed = []
+    app.renderOnce()
+  })
+
   // ⑫ 就绪校验：还有不合规的飞机 → 拦住，并说清是哪一架
   tapRect(deploy.geo.opRects[2])          // 清空
   deploy.rotation = 0

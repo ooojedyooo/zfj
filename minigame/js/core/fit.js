@@ -150,6 +150,7 @@ function occupiedExcept(placed, skipIdx) {
   const out = []
   ;(placed || []).forEach(function (p, i) {
     if (i === skipIdx) return
+    if (p.off) return        // 收起的架不在场上，不占位
     for (let k = 0; k < p.cells.length; k++) out.push(p.cells[k])
   })
   return out

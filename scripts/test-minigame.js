@@ -54,12 +54,14 @@ function makeCtx() {
 
 const CTX = makeCtx()
 const STORE = {}
+// 弹窗桩：记下最后一次弹窗的参数，让「拦住了没有、说了什么」可以断言
+const MODAL = { last: null, count: 0 }
 
 global.wx = {
   getSystemInfoSync: function () { return INFO },
   getLaunchOptionsSync: function () { return { query: {} } },
   createCanvas: function () { return { width: 0, height: 0, getContext: function () { return CTX } } },
-  showModal: function () {},
+  showModal: function (o) { MODAL.last = o || {}; MODAL.count++ },
   showToast: function () {},
   hideToast: function () {},
   showShareMenu: function () {},
@@ -256,6 +258,16 @@ async function main() {
     assert.strictEqual(room.planeCount, 3, '点第 3 个应为 3 架')
     tapRect(room.geo.planeSlots[0])
     assert.strictEqual(room.planeCount, 1, '点第 1 个应为 1 架')
+  })
+  check('点当前最亮的那一个 = 取消它（3 → 2），最少保留 1 架', function () {
+    tapRect(room.geo.planeSlots[2])
+    assert.strictEqual(room.planeCount, 3)
+    tapRect(room.geo.planeSlots[2])          // 再点第 3 个 → 熄灭
+    assert.strictEqual(room.planeCount, 2, '再点一次没有取消，这一下白点了')
+    tapRect(room.geo.planeSlots[1])          // 2 → 1
+    assert.strictEqual(room.planeCount, 1)
+    tapRect(room.geo.planeSlots[0])          // 已经是 1，不能再减到 0
+    assert.strictEqual(room.planeCount, 1, '被减到 0 了，没法开局')
   })
   check('点亮态可渲染', function () { app.renderOnce() })
 
@@ -541,7 +553,7 @@ async function main() {
     app.renderOnce()
   })
 
-  // ⑪ 点机体也能选中（命中判定放宽），再用「移除这架」删掉
+  // ⑪ 点机体也能选中（命中判定放宽），再用「收起这架」把它拿开
   //     只挑「落在棋盘内」的机体格：旋转后可能有机体格探出边界，那格点不到
   const bodyCell = deploy.placed[0].cells.filter(function (c) {
     return !c.isHead && c.row >= 1 && c.row <= BOARD_SIZE && c.col >= 1 && c.col <= BOARD_SIZE
@@ -556,10 +568,54 @@ async function main() {
     const head = deploy.placed[0].cells.filter(function (c) { return c.isHead })[0]
     assert.ok(!dim[head.row + ',' + head.col], '被选中的飞机被降饱和了')
   })
-  check('选中时操作栏第二个按钮变成「移除这架」', function () {
+
+  // 「移除」改成「收起」：本局几架在房间页就定死了，布阵时不能真删。
+  // 玩家点它的心态是「先拿开腾地方，一会儿放回来」，所以位置和朝向必须留着。
+  const stashedPos = {
+    row: deploy.placed[0].anchorRow,
+    col: deploy.placed[0].anchorCol,
+    rot: deploy.placed[0].rotation
+  }
+  check('「收起这架」只打标记，不真删', function () {
     deploy.onSecondAction()
-    assert.strictEqual(deploy.placed.length, 0, '「移除这架」没有生效')
+    assert.strictEqual(deploy.placed.length, 1, '数组被 splice 了，编号会塌')
+    assert.strictEqual(deploy.placed[0].off, true, '没有标记为收起')
     assert.strictEqual(deploy.selected, -1)
+  })
+  check('收起的飞机：棋盘上不画、不算违规、不占位', function () {
+    const flat = deploy.cells().reduce(function (a, r) { return a.concat(r) }, [])
+    assert.ok(!flat.some(function (v) { return v && (v.s === 'plane' || v.s === 'head') }),
+      '收起的飞机还画在棋盘上')
+    assert.strictEqual(deploy.audit().items.length, 0, '收起的飞机被算成了违规')
+    assert.strictEqual(deploy.offCount(), 1)
+    assert.strictEqual(deploy.activePlaced().length, 0)
+  })
+  check('收起后位置和朝向原样留着', function () {
+    const p = deploy.placed[0]
+    assert.strictEqual(p.anchorRow, stashedPos.row)
+    assert.strictEqual(p.anchorCol, stashedPos.col)
+    assert.strictEqual(p.rotation, stashedPos.rot)
+  })
+  check('点状态条的虚线槽 → 放回原位，朝向不变', function () {
+    deploy.onPickSlot(0)
+    const p = deploy.placed[0]
+    assert.strictEqual(p.off, false, '没有展开')
+    assert.strictEqual(p.anchorRow, stashedPos.row, '回来的位置变了')
+    assert.strictEqual(p.anchorCol, stashedPos.col, '回来的位置变了')
+    assert.strictEqual(p.rotation, stashedPos.rot, '回来的朝向变了')
+    assert.strictEqual(deploy.selected, 0, '展开后没有顺手选中它')
+  })
+  check('还有收起没放回时，就绪被拦住（且不是「违规」口吻）', function () {
+    deploy.placed[0].off = true
+    MODAL.last = null
+    const before = MODAL.count
+    deploy.onReady()
+    assert.strictEqual(MODAL.count, before + 1, '没有弹窗拦住就绪')
+    const txt = (MODAL.last.title || '') + ' ' + (MODAL.last.content || '')
+    assert.ok(txt.indexOf('没放上去') >= 0, '提示没有说清是「还没放」：' + txt)
+    assert.strictEqual(deploy.readying, false, '却提交了')
+    assert.strictEqual(deploy.waiting, false, '却进了等待对手')
+    deploy.placed[0].off = false
   })
 
   // 极端情况：三架完全重合。真实操作里「连续拖到同一处」就能达成，不能崩

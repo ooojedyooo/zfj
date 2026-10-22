@@ -249,10 +249,12 @@ class Room extends Scene {
         })
       }, this)
 
+      // 说清这一排是「定数量」，不是「往棋盘上放」——
+      // 房间页还没有棋盘，此刻点图标能做的只有一件事：决定本局打几架。
       draw.text(ctx, '点亮几架 = 本局几架', g.slotHintX, g.planeSlots[0].y + u(38), {
         size: u(theme.size.tiny), color: c.textMuted
       })
-      draw.text(ctx, '每架 10 格', g.slotHintX, g.planeSlots[0].y + u(74), {
+      draw.text(ctx, '进棋盘后可收起 / 放回', g.slotHintX, g.planeSlots[0].y + u(74), {
         size: u(theme.size.tiny), color: c.textMuted
       })
 
@@ -294,11 +296,17 @@ class Room extends Scene {
 
   /* ---------------- 交互 ---------------- */
 
-  /** 点第 n 个飞机棋子 → 数量设为 n（点亮式选择，一步到位；不需要 +/− 反复点） */
+  /**
+   * 点第 n 个飞机棋子 → 数量设为 n（点亮式选择，一步到位；不需要 +/− 反复点）
+   *
+   * 点到「当前最亮的那一个」= 取消它（3 → 2）。点亮式控件的通用直觉是
+   * 「再点一下熄灭」，如果点第 3 个永远只得到 3，玩家会觉得这一下白点了。
+   * 最少保留 1 架（0 架没法开局）。
+   */
   onPickPlane(n) {
     if (this.loading || this.mode === 'waiting') return
     if (n < MIN_PLANES || n > MAX_PLANES) return
-    this.planeCount = n
+    this.planeCount = (n === this.planeCount && n > MIN_PLANES) ? n - 1 : n
   }
 
   onTogglePassword() {

@@ -237,12 +237,9 @@ class Room extends Scene {
         const on = i < this.planeCount
         const pal = theme.color.planePalette[i % theme.color.planePalette.length]
         draw.fillRect(ctx, s.x, s.y, s.w, s.h, on ? c.primaryLight : c.gray, u(theme.radius.md))
-        if (on) {
-          draw.strokeRect(ctx, s.x, s.y, s.w, s.h, pal.body, u(theme.radius.md), 1.5)
-          draw.text(ctx, String(i + 1), s.x + s.w - u(22), s.y + u(24), {
-            size: u(theme.size.tiny), weight: 600, color: pal.body, align: 'center'
-          })
-        }
+        if (on) draw.strokeRect(ctx, s.x, s.y, s.w, s.h, pal.body, u(theme.radius.md), 1.5)
+        // 这里不印序号：槽位本身是横向排列的，「第几个」已经由位置表达了，
+        // 再叠数字会压住 66px 的飞机图标。序号只在棋盘机头格里出现。
         const icon = u(66)
         planeIcon.render(ctx, s.x + (s.w - icon) / 2, s.y + (s.h - icon) / 2, icon, {
           rotation: 0,

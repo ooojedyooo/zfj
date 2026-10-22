@@ -2,8 +2,12 @@
 // 9×9 棋盘控件 —— 小游戏版，行为对齐 miniprogram/components/board-grid
 //
 // cells 取值：'' | 'plane' | 'head' | 'hit' | 'kill' | 'miss'
-//   也可以是对象 { s: 'head', p: 0 } —— p 是「飞机身份色下标」，
-//   用于布阵时区分第 1/2/3 架（颜色 + 机头序号双重编码，见 theme.planePalette）
+//   也可以是对象 { s: 'head', p: 0, bad: true, conflict: true }
+//     p        「飞机身份色下标」，用于布阵时区分第 1/2/3 架（颜色 + 机头序号双重编码）
+//     bad      这一架整体不合规（出界 / 重叠）→ 机体半透明红、机头实色红
+//              编辑期允许摆在不合法位置，靠这个标记让「它还不合规」一眼可见
+//     conflict 这一格被两架及以上同时占用 → 再压一层深红 + 斜线
+//              半透明红叠在一起只会变深一点，看不出「这里有两架」
 //   plane → 我方飞机机体
 //   head  → 我方飞机机头（有 p 时印序号，无 p 时印白点）
 //   hit   → 被击中（非机头）
@@ -14,11 +18,10 @@
 //   'select'   选中架的整架描边（实线）
 //   'fade'     拖拽时原位置留痕（浅色块）
 //   'ghostOk'  松手就落在这里（实心色块 + 实线外轮廓）
-//   'ghostBad' 手指所在但不能放（浅红 + 斜线 + 红外轮廓）
+//   'ghostBad' 松手会落在这里，但这一位放不下（浅红 + 斜线）
 //   'hint'     自动吸附的候选位置（**只有虚线外轮廓，不填色**）
-//
-// 为什么 hint 不填色：它表达的是「如果你现在松手，会落到这儿」，
-// 属于**预期**而不是**现状**。填色会和 ghostOk 混淆，玩家会以为已经放下了。
+//              注意：布阵页在「编辑期宽松」之后不再产生 hint —— 系统不再替玩家
+//              找位置。该标记保留给仍需要「建议落点」的场景（如自动整理预览）。
 //
 // disabledMap: { 'row,col': true } 已轰炸过的格，不可再选（BAT-07）
 const theme = require('../core/theme')
@@ -83,11 +86,16 @@ function layout(scene, o, onCellTap) {
   }
 }
 
-/** cells 的元素规范化：字符串 → { s, p } */
+/** cells 的元素规范化：字符串 → { s, p, bad, conflict } */
 function normCell(v) {
   if (!v) return null
-  if (typeof v === 'string') return { s: v, p: -1 }
-  return { s: v.s, p: (v.p == null ? -1 : v.p) }
+  if (typeof v === 'string') return { s: v, p: -1, bad: false, conflict: false }
+  return {
+    s: v.s,
+    p: (v.p == null ? -1 : v.p),
+    bad: !!v.bad,
+    conflict: !!v.conflict
+  }
 }
 
 /** 取某架飞机的身份色，p < 0 时回落到默认单色 */
@@ -184,9 +192,10 @@ function render(ctx, o, u) {
       if (state === 'plane' || state === 'head') {
         const pal = paletteOf(info.p)
         const isHead = state === 'head'
-        const fill = isHead
-          ? (pal ? pal.head : c.planeHead)
-          : (pal ? pal.body : c.plane)
+        // 非法（出界 / 重叠）优先于身份色 —— 此刻「它还不合规」比「它是第几架」更要紧
+        const fill = info.bad
+          ? (isHead ? c.planeBadHead : c.planeBad)
+          : (isHead ? (pal ? pal.head : c.planeHead) : (pal ? pal.body : c.plane))
         draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, fill, cell * 0.1)
 
         if (isHead) {
@@ -201,8 +210,18 @@ function render(ctx, o, u) {
             draw.circle(ctx, cx, cy, Math.max(1.5, cell * 0.14), '#FFFFFF')
           }
         }
+
+        // 冲突格：两架及以上压在同一格。
+        // 两层半透明红叠一起只会「再深一点」，看不出是两架 —— 所以补一道斜线说清。
+        if (info.conflict) {
+          draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2,
+            c.conflict, cell * 0.1)
+          hatch(ctx, x, y, cell, c.conflictLine, Math.max(1, cell * 0.06))
+        }
+
         // 非焦点飞机降饱和（选中 / 拖拽某一架时，让焦点跳出来）
-        if (dim[keyOf(r, col)]) {
+        // 已经标红的飞机不降饱和：它现在恰恰最需要被看见
+        if (!info.bad && dim[keyOf(r, col)]) {
           draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2,
             c.planeDim, cell * 0.1)
         }

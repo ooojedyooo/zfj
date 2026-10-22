@@ -11,6 +11,8 @@ const KINDS = {
   primary: { bg: theme.color.primary, fg: '#FFFFFF', border: null },
   outline: { bg: theme.color.primaryLight, fg: theme.color.primaryDark, border: theme.color.primary },
   danger: { bg: theme.color.dangerLight, fg: theme.color.dangerDark, border: theme.color.danger },
+  // warn = 「还没准备好」：不是错误，是「这一步还不能过」。用橙色区别于危险动作的红。
+  warn: { bg: theme.color.warnLight, fg: theme.color.warnDark, border: theme.color.warn },
   ghost: { bg: theme.color.gray, fg: theme.color.text, border: null }
 }
 

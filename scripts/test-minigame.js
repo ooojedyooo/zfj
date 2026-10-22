@@ -335,33 +335,58 @@ async function main() {
     assert.strictEqual(bodies[0].p, 0)
   })
 
-  // ② 越界 → 自动就近吸附（旧行为是「拒绝 + 让玩家重新点一次」）
-  tapRect(deploy.geo.opRects[2])   // 清空
-  tapRect(Board.cellRect(board, 8, 3))   // 朝上时机体会延伸到第 11 行
-  check('越界落点自动吸附到最近的合法位', function () {
-    assert.strictEqual(deploy.placed.length, 1, '越界落点没有被处理')
+  // ② 越界落点 → 直接放下并标红（编辑期宽松：系统不替玩家改位置）
+  tapRect(deploy.geo.opRects[2])         // 清空
+  deploy.rotation = 0                    // 夹具：机头朝上、机身向下，第 8 行必然探出棋盘
+  tapRect(Board.cellRect(board, 8, 3))
+  check('越界落点直接放下，机头仍在点的那一格', function () {
+    assert.strictEqual(deploy.placed.length, 1, '越界落点没放下')
     const p = deploy.placed[0]
-    assert.ok(p.anchorRow < 8, '没有吸附，机头还在越界行 ' + p.anchorRow)
-    p.cells.forEach(function (c) {
-      assert.ok(c.row >= 1 && c.row <= 9 && c.col >= 1 && c.col <= 9,
-        '吸附后仍有格出界：' + c.row + ',' + c.col)
-    })
+    assert.strictEqual(p.anchorRow, 8, '机头被系统挪走了：' + p.anchorRow)
+    assert.strictEqual(p.anchorCol, 3, '机头被系统挪走了：' + p.anchorCol)
   })
+  check('越界被审计出来（就绪时要靠它拦人）', function () {
+    const a = deploy.audit()
+    assert.strictEqual(a.ok, false, '越界竟然判为合规')
+    assert.strictEqual(a.items.length, 1)
+    assert.ok(a.items[0].outside > 0, '没有数出出界格数')
+    assert.strictEqual(a.items[0].overlap, false)
+  })
+  check('越界那架整架标红，且出界格不进棋盘矩阵', function () {
+    const flat = deploy.cells().reduce(function (a, r) { return a.concat(r) }, [])
+    const planes = flat.filter(function (v) { return v && (v.s === 'plane' || v.s === 'head') })
+    assert.ok(planes.length > 0, '棋盘上一格都没画')
+    planes.forEach(function (v) {
+      assert.strictEqual(v.bad, true, '有格子没被标红')
+    })
+    assert.ok(planes.length < 10, '出界格不该出现在矩阵里，实际 ' + planes.length + ' 格')
+  })
+  check('标红状态可正常渲染', function () { app.renderOnce() })
 
-  // ③ 压到别的飞机 → 同样自动改放到最近的空位
+  // ③ 压到别的飞机 → 也直接放下，只标红。
+  //    这正是布阵死锁的解法：A 想挪到 B 的位置时，不必先把 A 扔进一个没用的空位。
   tapRect(deploy.geo.opRects[2])
-  tapRect(Board.cellRect(board, 5, 5))
+  deploy.rotation = 0
+  tapRect(Board.cellRect(board, 5, 5))   // A 占 行 5~8 / 列 3~7
   const firstCells = JSON.stringify(deploy.placed[0].cells)
-  tapRect(Board.cellRect(board, 2, 5))   // 与第 1 架重叠
-  check('重叠落点自动改放到最近的空位', function () {
+  tapRect(Board.cellRect(board, 3, 5))   // B 机头 (3,5)，机身必然压到 A 的 5~6 行
+  check('重叠落点也直接放下，且不动已放好的那架', function () {
     assert.strictEqual(deploy.placed.length, 2, '重叠落点没放下：' + deploy.placed.length)
     assert.strictEqual(JSON.stringify(deploy.placed[0].cells), firstCells, '第 1 架被挪动了')
-    const key = {}
-    deploy.placed[0].cells.forEach(function (c) { key[c.row + ',' + c.col] = true })
-    deploy.placed[1].cells.forEach(function (c) {
-      assert.ok(!key[c.row + ',' + c.col], '两架重叠在 ' + c.row + ',' + c.col)
-    })
   })
+  check('重叠被审计出来，两架都算不合规', function () {
+    const a = deploy.audit()
+    assert.strictEqual(a.ok, false, '重叠竟然判为合规')
+    assert.strictEqual(a.items.length, 2, '违规架数 ' + a.items.length)
+    a.items.forEach(function (it) { assert.strictEqual(it.overlap, true) })
+  })
+  check('冲突格单独标出来（哪几格叠在一起看得见）', function () {
+    const a = deploy.audit()
+    assert.ok(Object.keys(a.conflict).length > 0, '没有标出冲突格')
+    const flat = deploy.cells().reduce(function (x, r) { return x.concat(r) }, [])
+    assert.ok(flat.some(function (v) { return v && v.conflict }), '矩阵里没有 conflict 标记')
+  })
+  check('重叠状态可正常渲染', function () { app.renderOnce() })
   check('第 2 架带自己的身份下标（第 3 架同理）', function () {
     const flat = deploy.cells().reduce(function (a, r) { return a.concat(r) }, [])
     assert.ok(flat.some(function (v) { return v && v.p === 1 && v.s === 'head' }), '没有 p=1 的机头')
@@ -442,84 +467,75 @@ async function main() {
     assert.strictEqual(deploy._press, null)
   })
 
-  // ⑨ 拖到放不下的位置（会出界）→ 红框 + 自动吸附虚线框同屏显示
-  const curHead = { row: deploy.placed[0].anchorRow, col: deploy.placed[0].anchorCol }
-  const badTarget = Board.cellRect(board, curHead.row, 3)   // 朝右时机体会伸到第 0 列
+  // ⑨ 拖到会出界的位置 → 只给红框，松手就地落下（不再吸附去别处）
+  //    先把朝向固定为 0，保证「拖到最下排必然探出棋盘」，不依赖前面步骤累积的朝向
+  const p0 = deploy.placed[0]
+  p0.rotation = 0
+  p0.cells = getAbsoluteCells(p0.planeId, p0.anchorRow, p0.anchorCol, 0)
+  const curHead = { row: p0.anchorRow, col: p0.anchorCol }
+  const badTarget = Board.cellRect(board, 9, curHead.col)
   app.touchStart(anchorNow().x + anchorNow().w / 2, anchorNow().y + anchorNow().h / 2)
   app.touchMove(badTarget.x + badTarget.w / 2, badTarget.y + badTarget.h / 2)
-  check('拖到放不下的位置时，红框与「将落点」虚线框同时给出', function () {
+  check('拖到放不下的位置：红框 + 说清超界几格', function () {
     assert.ok(deploy.drag, '没有进入拖拽态')
     assert.strictEqual(deploy.drag.valid, false, '这个位置竟然判为合法')
-    assert.ok(deploy.drag.fit, '没有算出吸附位置')
+    assert.ok(deploy.drag.outside > 0, '没有数出出界格数')
+    assert.ok(deploy.dragReasonText(deploy.drag).indexOf('超出棋盘') >= 0,
+      deploy.dragReasonText(deploy.drag))
     const marks = deploy.marks()
     const kinds = Object.keys(marks).map(function (k) { return marks[k] })
     assert.ok(kinds.indexOf('ghostBad') >= 0, '没有红框：' + kinds.join(','))
-    assert.ok(kinds.indexOf('hint') >= 0, '没有吸附虚线框：' + kinds.join(','))
+    assert.ok(kinds.indexOf('hint') < 0, '系统还在替玩家找位置（不该再有吸附虚线框）')
   })
-  check('吸附位置比手指位置更靠棋盘内', function () {
-    assert.ok(deploy.drag.fit.anchorCol > deploy.drag.col,
-      '吸附没往内挪：' + deploy.drag.col + ' → ' + deploy.drag.fit.anchorCol)
-  })
-  check('拖拽中会给「松手会落到哪」的明确文案', function () {
-    assert.ok(deploy.drag.reason, '没有记录非法原因')
-    app.renderOnce()
-  })
+  check('拖拽中照常可渲染', function () { app.renderOnce() })
   app.touchEnd(badTarget.x + badTarget.w / 2, badTarget.y + badTarget.h / 2)
-  check('松手后落到吸附位置（不是弹回原位，也不是卡住）', function () {
+  check('松手就地落下（不弹回原位、不吸附去别处）', function () {
     const p = deploy.placed[0]
     assert.strictEqual(deploy.drag, null)
-    assert.strictEqual(p.anchorRow, curHead.row)
-    assert.ok(p.anchorCol > 3, '没落到吸附位置，实际 col=' + p.anchorCol)
-    p.cells.forEach(function (c) {
-      assert.ok(c.row >= 1 && c.row <= 9 && c.col >= 1 && c.col <= 9,
-        '吸附后仍有格出界：' + c.row + ',' + c.col)
+    assert.strictEqual(p.anchorRow, 9, '行没落到手指处：' + p.anchorRow)
+    assert.strictEqual(p.anchorCol, curHead.col, '列没落到手指处：' + p.anchorCol)
+    assert.strictEqual(deploy.placed.length, 1)
+  })
+  check('落下后这架被标红，就绪会被它拦住', function () {
+    const a = deploy.audit()
+    assert.strictEqual(a.ok, false)
+    assert.ok(a.items[0].outside > 0, '没有数出界格数')
+  })
+  check('机头始终留在棋盘内（它是抓手，也是旋转轴）', function () {
+    deploy.placed.forEach(function (p) {
+      assert.ok(p.anchorRow >= 1 && p.anchorRow <= BOARD_SIZE, '机头行出界了：' + p.anchorRow)
+      assert.ok(p.anchorCol >= 1 && p.anchorCol <= BOARD_SIZE, '机头列出界了：' + p.anchorCol)
     })
   })
 
-  // ⑩ 附近彻底没地方（角落）→ 松手回原位，并说明原因
-  const beforeFail = { row: deploy.placed[0].anchorRow, col: deploy.placed[0].anchorCol }
-  const corner = Board.cellRect(board, 1, 1)
-  app.touchStart(anchorNow().x + anchorNow().w / 2, anchorNow().y + anchorNow().h / 2)
-  app.touchMove(corner.x + corner.w / 2, corner.y + corner.h / 2)
-  check('吸附半径内确实无解时 fit 为空（不硬塞到很远的地方）', function () {
-    assert.ok(deploy.drag, '没有进入拖拽态')
-    assert.strictEqual(deploy.drag.valid, false)
-    assert.strictEqual(deploy.drag.fit, null, '却在半径外找了解：' + JSON.stringify(deploy.drag.fit))
-    const marks = deploy.marks()
-    const kinds = Object.keys(marks).map(function (k) { return marks[k] })
-    assert.ok(kinds.indexOf('ghostBad') >= 0, '没有红框')
-    assert.ok(kinds.indexOf('hint') < 0, '不该有吸附虚线框')
-  })
-  app.touchEnd(corner.x + corner.w / 2, corner.y + corner.h / 2)
-  check('放不下时飞机留在原位（不丢、不乱跑）', function () {
-    const p = deploy.placed[0]
-    assert.strictEqual(p.anchorRow, beforeFail.row)
-    assert.strictEqual(p.anchorCol, beforeFail.col)
-    assert.strictEqual(deploy.placed.length, 1)
-    assert.strictEqual(deploy.drag, null)
-  })
-
-  // ⑪ 贴边时按旋转 → 自动挪开再转（不是「按了没反应」）
+  // ⑩ 贴边按旋转 → 就转，不偷偷挪位置
   tapRect(deploy.geo.opRects[2])          // 清空
-  tapRect(Board.cellRect(board, 1, 5))    // 机头贴住上边
+  deploy.rotation = 0
+  tapRect(Board.cellRect(board, 1, 5))    // 机头贴住上边，机身向下
   const edgeAnchor = { row: deploy.placed[0].anchorRow, col: deploy.placed[0].anchorCol }
   const edgeRot = deploy.placed[0].rotation
   tapRect(deploy.geo.opRects[0])          // 「旋转」
-  check('贴边旋转会自动挪开再转，而不是静默失败', function () {
+  check('贴边旋转只转向、不挪位（机头是轴，位置由玩家定）', function () {
     const p = deploy.placed[0]
-    assert.notStrictEqual(p.rotation, edgeRot, '朝向没变，等于按了没反应')
+    assert.strictEqual(p.rotation, (edgeRot + 1) % 4, '朝向没变，等于按了没反应')
+    assert.strictEqual(p.anchorRow, edgeAnchor.row, '机头被系统挪走了')
+    assert.strictEqual(p.anchorCol, edgeAnchor.col, '机头被系统挪走了')
     assert.strictEqual(p.cells.length, 10)
-    p.cells.forEach(function (c) {
-      assert.ok(c.row >= 1 && c.row <= 9 && c.col >= 1 && c.col <= 9,
-        '转完出界了：' + c.row + ',' + c.col)
-    })
-    // 机头允许被挪开（否则转不过去），但不能跑到很远
-    const dist = Math.max(Math.abs(p.anchorRow - edgeAnchor.row), Math.abs(p.anchorCol - edgeAnchor.col))
-    assert.ok(dist <= 2, '机头被挪了 ' + dist + ' 格，太远了')
+  })
+  check('转完探出棋盘只是标红，不是拒绝', function () {
+    const a = deploy.audit()
+    assert.strictEqual(typeof a.ok, 'boolean')
+    if (!a.ok) {
+      assert.ok(a.items[0].outside > 0 || a.items[0].overlap, '违规原因不明')
+    }
+    app.renderOnce()
   })
 
-  // ⑫ 点机体也能选中（命中判定放宽），再用「移除这架」删掉
-  const bodyCell = deploy.placed[0].cells.filter(function (c) { return !c.isHead })[0]
+  // ⑪ 点机体也能选中（命中判定放宽），再用「移除这架」删掉
+  //     只挑「落在棋盘内」的机体格：旋转后可能有机体格探出边界，那格点不到
+  const bodyCell = deploy.placed[0].cells.filter(function (c) {
+    return !c.isHead && c.row >= 1 && c.row <= BOARD_SIZE && c.col >= 1 && c.col <= BOARD_SIZE
+  })[0]
   tapRect(Board.cellRect(board, bodyCell.row, bodyCell.col))
   check('点机体也能选中该架', function () {
     assert.strictEqual(deploy.placed.length, 1)
@@ -536,7 +552,73 @@ async function main() {
     assert.strictEqual(deploy.selected, -1)
   })
 
-  // ⑫ 清空 / 随机布阵
+  // 极端情况：三架完全重合。真实操作里「连续拖到同一处」就能达成，不能崩
+  check('三架重合时三架都算违规，且能在重叠格上轮换选中', function () {
+    deploy.placed = []
+    for (let k = 0; k < 3; k++) {
+      deploy.placed.push({
+        planeId: 'standard', anchorRow: 5, anchorCol: 5, rotation: 0,
+        cells: getAbsoluteCells('standard', 5, 5, 0)
+      })
+    }
+    const a = deploy.audit()
+    assert.strictEqual(a.items.length, 3, '违规架数 ' + a.items.length)
+    a.items.forEach(function (it) { assert.strictEqual(it.overlap, true) })
+    assert.strictEqual(Object.keys(a.conflict).length, 10,
+      '冲突格数 ' + Object.keys(a.conflict).length)
+    app.renderOnce()
+
+    // 点机翼格（非机头，不会触发旋转）→ 每点一次轮到下一架
+    deploy.selected = -1
+    const order = []
+    for (let i = 0; i < 3; i++) {
+      deploy.onBoardTap(6, 5)
+      order.push(deploy.selected)
+    }
+    assert.deepStrictEqual(order, [2, 1, 0], '轮换顺序不对：' + order.join(','))
+  })
+
+  // ⑫ 就绪校验：还有不合规的飞机 → 拦住，并说清是哪一架
+  tapRect(deploy.geo.opRects[2])          // 清空
+  deploy.rotation = 0
+  tapRect(Board.cellRect(board, 5, 5))    // A 占 行 5~8
+  tapRect(Board.cellRect(board, 3, 5))    // B 压到 A
+  const pendingBefore = deploy.pendingCount()
+  check('有违规时「就绪」变成「先修正 N 架」', function () {
+    assert.strictEqual(pendingBefore, 2, '违规架数 ' + pendingBefore)
+    app.renderOnce()
+  })
+  check('点「就绪」被拦下：不提交、不跳走，并选中第一架问题飞机', function () {
+    tapRect(deploy.geo.readyBtn)
+    assert.strictEqual(app.scene.name, 'deploy', '竟然开局了')
+    assert.strictEqual(deploy.readying, false, '竟然进了提交态')
+    assert.strictEqual(deploy.waiting, false, '竟然进了等待态')
+    assert.strictEqual(deploy.selected, 0, '没把玩家带到第一架问题飞机上')
+  })
+  check('拦截后可渲染（红格 + 状态条徽标 + 橙色按钮）', function () { app.renderOnce() })
+
+  // ⑬ 「自动整理」= 显式修复入口：玩家点了才动他的飞机
+  deploy.autoFix()
+  check('「自动整理」把违规飞机挪到最近的合法位置', function () {
+    const a = deploy.audit()
+    assert.strictEqual(a.ok, true, '整理后仍不合规：' + JSON.stringify(a.items))
+    assert.strictEqual(deploy.placed.length, 2, '整理过程中丢了飞机')
+  })
+  check('整理后互不重叠、没有出界格', function () {
+    const key = {}
+    deploy.placed[0].cells.forEach(function (c) { key[c.row + ',' + c.col] = true })
+    deploy.placed[1].cells.forEach(function (c) {
+      assert.ok(!key[c.row + ',' + c.col], '仍重叠在 ' + c.row + ',' + c.col)
+    })
+    deploy.placed.forEach(function (p) {
+      p.cells.forEach(function (c) {
+        assert.ok(c.row >= 1 && c.row <= BOARD_SIZE && c.col >= 1 && c.col <= BOARD_SIZE,
+          '仍有格出界：' + c.row + ',' + c.col)
+      })
+    })
+  })
+
+  // ⑭ 清空 / 随机布阵
   tapRect(deploy.geo.opRects[2])
   check('「清空」生效', function () { assert.strictEqual(deploy.placed.length, 0) })
 
@@ -550,6 +632,10 @@ async function main() {
   check('随机布阵后机头仍带身份下标', function () {
     const flat = deploy.cells().reduce(function (a, r) { return a.concat(r) }, [])
     assert.ok(flat.some(function (v) { return v && v.p === 0 && v.s === 'head' }), '没有 p=0 的机头')
+  })
+  check('随机布阵的结果一定合规（不会自己把自己拦在门外）', function () {
+    const a = deploy.audit()
+    assert.strictEqual(a.ok, true, '随机布阵产生了违规：' + JSON.stringify(a.items))
   })
 
   // 就绪

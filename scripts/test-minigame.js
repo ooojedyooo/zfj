@@ -352,12 +352,13 @@ async function main() {
     assert.ok(a.items[0].outside > 0, '没有数出出界格数')
     assert.strictEqual(a.items[0].overlap, false)
   })
-  check('越界那架整架标红，且出界格不进棋盘矩阵', function () {
+  check('越界那架整架标为不合规（半透明）+ 探出棋盘，出界格不进矩阵', function () {
     const flat = deploy.cells().reduce(function (a, r) { return a.concat(r) }, [])
     const planes = flat.filter(function (v) { return v && (v.s === 'plane' || v.s === 'head') })
     assert.ok(planes.length > 0, '棋盘上一格都没画')
     planes.forEach(function (v) {
-      assert.strictEqual(v.bad, true, '有格子没被标红')
+      assert.strictEqual(v.bad, true, '有格子没被标为不合规')
+      assert.strictEqual(v.trimmed, true, '没被标成「探出棋盘」')
     })
     assert.ok(planes.length < 10, '出界格不该出现在矩阵里，实际 ' + planes.length + ' 格')
   })
@@ -385,6 +386,15 @@ async function main() {
     assert.ok(Object.keys(a.conflict).length > 0, '没有标出冲突格')
     const flat = deploy.cells().reduce(function (x, r) { return x.concat(r) }, [])
     assert.ok(flat.some(function (v) { return v && v.conflict }), '矩阵里没有 conflict 标记')
+  })
+  check('重叠只标 bad、不标 trimmed（压到人 ≠ 出界）', function () {
+    const flat = deploy.cells().reduce(function (x, r) { return x.concat(r) }, [])
+    const planes = flat.filter(function (v) { return v && (v.s === 'plane' || v.s === 'head') })
+    assert.ok(planes.length > 0)
+    planes.forEach(function (v) {
+      assert.strictEqual(v.bad, true, '重叠的格子没标不合规')
+      assert.strictEqual(v.trimmed, false, '把重叠误标成出界了')
+    })
   })
   check('重叠状态可正常渲染', function () { app.renderOnce() })
   check('第 2 架带自己的身份下标（第 3 架同理）', function () {

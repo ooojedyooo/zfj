@@ -2,12 +2,13 @@
 // 9×9 棋盘控件 —— 小游戏版，行为对齐 miniprogram/components/board-grid
 //
 // cells 取值：'' | 'plane' | 'head' | 'hit' | 'kill' | 'miss'
-//   也可以是对象 { s: 'head', p: 0, bad: true, conflict: true }
+//   也可以是对象 { s: 'head', p: 0, bad: true, trimmed: true, conflict: true }
 //     p        「飞机身份色下标」，用于布阵时区分第 1/2/3 架（颜色 + 机头序号双重编码）
-//     bad      这一架整体不合规（出界 / 重叠）→ 机体半透明红、机头实色红
+//     bad      这一架整体不合规（出界 / 重叠）→ 整架降为半透明，**身份色不变**
 //              编辑期允许摆在不合法位置，靠这个标记让「它还不合规」一眼可见
-//     conflict 这一格被两架及以上同时占用 → 再压一层深红 + 斜线
-//              半透明红叠在一起只会变深一点，看不出「这里有两架」
+//     trimmed  这一架有格子在棋盘外 → 界内可见部分加红色描边（边界被切断了）
+//     conflict 这一格被两架及以上同时占用 → 深红 + 白斜线
+//              半透明叠在一起只会变深一点，看不出「这里有两架」
 //   plane → 我方飞机机体
 //   head  → 我方飞机机头（有 p 时印序号，无 p 时印白点）
 //   hit   → 被击中（非机头）
@@ -86,14 +87,15 @@ function layout(scene, o, onCellTap) {
   }
 }
 
-/** cells 的元素规范化：字符串 → { s, p, bad, conflict } */
+/** cells 的元素规范化：字符串 → { s, p, bad, trimmed, conflict } */
 function normCell(v) {
   if (!v) return null
-  if (typeof v === 'string') return { s: v, p: -1, bad: false, conflict: false }
+  if (typeof v === 'string') return { s: v, p: -1, bad: false, trimmed: false, conflict: false }
   return {
     s: v.s,
     p: (v.p == null ? -1 : v.p),
     bad: !!v.bad,
+    trimmed: !!v.trimmed,
     conflict: !!v.conflict
   }
 }
@@ -192,15 +194,20 @@ function render(ctx, o, u) {
       if (state === 'plane' || state === 'head') {
         const pal = paletteOf(info.p)
         const isHead = state === 'head'
-        // 非法（出界 / 重叠）优先于身份色 —— 此刻「它还不合规」比「它是第几架」更要紧
-        const fill = info.bad
-          ? (isHead ? c.planeBadHead : c.planeBad)
-          : (isHead ? (pal ? pal.head : c.planeHead) : (pal ? pal.body : c.plane))
+        const fill = isHead ? (pal ? pal.head : c.planeHead) : (pal ? pal.body : c.plane)
+
+        // 不合规（出界 / 重叠）：整架**降不透明度，但不换颜色**。
+        //   换成纯红会同时丢掉两层信息 —— 「这是第几架」和「这是飞机、不是被打中的格子」。
+        //   保留身份色 + 变虚，两个诉求一次满足。
+        const prevAlpha = ctx.globalAlpha
+        if (info.bad) ctx.globalAlpha = prevAlpha * 0.5
         draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, fill, cell * 0.1)
+        ctx.globalAlpha = prevAlpha
 
         if (isHead) {
           if (pal) {
             // 有身份色 → 印序号：颜色负责扫一眼，序号负责确认「是第几架」
+            // 序号不在半透明层里，飞机变虚了它也要一直读得清
             draw.text(ctx, String(info.p + 1), cx, cy + cell * 0.02, {
               size: cell * 0.52, weight: 600, color: '#FFFFFF',
               align: 'center', baseline: 'middle'
@@ -211,8 +218,15 @@ function render(ctx, o, u) {
           }
         }
 
-        // 冲突格：两架及以上压在同一格。
-        // 两层半透明红叠一起只会「再深一点」，看不出是两架 —— 所以补一道斜线说清。
+        // 出界：界内可见的那部分加红色描边 —— 表达「这架的边界被棋盘切断了」。
+        // 用描边而不是填色：填色会占用「这里有冲突」那个视觉通道。
+        if (info.trimmed) {
+          draw.strokeRect(ctx, x + 1, y + 1, cell - 2, cell - 2, c.danger,
+            cell * 0.1, Math.max(1.2, cell * 0.05))
+        }
+
+        // 冲突格：两架及以上压在同一格。深红 + 白斜线，不透明，压在最上层。
+        // 两层半透明叠一起只会「再深一点」，看不出是两架 —— 斜线才说得清。
         if (info.conflict) {
           draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2,
             c.conflict, cell * 0.1)
@@ -220,7 +234,7 @@ function render(ctx, o, u) {
         }
 
         // 非焦点飞机降饱和（选中 / 拖拽某一架时，让焦点跳出来）
-        // 已经标红的飞机不降饱和：它现在恰恰最需要被看见
+        // 已经半透明的不合规飞机不再降饱和：它现在恰恰最需要被看见
         if (!info.bad && dim[keyOf(r, col)]) {
           draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2,
             c.planeDim, cell * 0.1)

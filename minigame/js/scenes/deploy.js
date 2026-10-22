@@ -280,10 +280,11 @@ class Deploy extends Scene {
     const m = createMatrix(BOARD_SIZE, '')
     const a = this.audit()
     this.placed.forEach(function (p, i) {
-      // 出界 / 压到别人 → 这一架整体标红。
-      // 「整架红」而不是「只红冲突的那几格」：玩家要判断的是「这一架能不能用」，
-      // 逐格标红会让人以为只有那几个格子有问题。
+      // 出界 / 压到别人 → 这一架整体标「不合规」（画成半透明）。
+      // 「整架」而不是「只标冲突的那几格」：玩家要判断的是「这一架能不能用」，
+      // 逐格标会让人以为只有那几个格子有问题。
       const bad = a.outside[i] > 0 || !!a.overlap[i]
+      const trimmed = a.outside[i] > 0
       p.cells.forEach(function (c) {
         // 出界的格直接不画。画在棋盘范围外会糊到倒计时、状态条上。
         if (outsideCell(c)) return
@@ -291,6 +292,7 @@ class Deploy extends Scene {
           s: c.isHead ? 'head' : 'plane',
           p: i,
           bad: bad,
+          trimmed: trimmed,
           conflict: !!a.conflict[c.row + ',' + c.col]
         }
       })
@@ -433,7 +435,8 @@ class Deploy extends Scene {
       planeIcon.render(ctx, s.x + u(4), s.y + u(4), s.w - u(8), {
         on: on,
         rotation: on ? this.placed[i].rotation : 0,
-        color: bad ? c.planeBadHead : pal.body,
+        // 槽位只有 72 设计单位，半透明的小图标看不出来，所以这里用实色红
+        color: bad ? c.danger : pal.body,
         headColor: bad ? c.dangerDark : pal.head
       })
 

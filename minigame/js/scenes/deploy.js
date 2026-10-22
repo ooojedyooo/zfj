@@ -5,26 +5,36 @@
 //   点空白格  → 放一架（落点 = 机头）；若已有选中，先退出选中，不误放
 //   点机头    → 选中这一架；已选中时再点一次 = 以机头为轴旋转 90°
 //   点机体    → 同样选中（命中判定放宽，手指比格子粗）
-//   按住机头拖 → 整架跟着走，松手吸附到最近格；非法位置红框且不落位
+//   按住机头拖 → 整架跟着走，松手吸附到最近格
 //   点状态条棋子 → 直接选中那一架
 //
 // 为什么「先选中再旋转」而不是「点一下直接转」：
 //   拖拽的起手式就是按住机头，手指自然会先位移 3~8px。
 //   若点一下就转，玩家每次想拖都会先把飞机转歪。选中态是这层安全垫。
+//
+// 【放不下怎么办】见 core/fit.js。总原则：合法路径零噪音，非法路径给去处。
+//   拖拽 → 蓝框「松手落这里」（含自动吸附，最多挪 2 格，且不改朝向）
+//   旋转 → 90° 不行就试 180°/270°，总会告诉你最后转成了哪个方向
+//   放置 → 原地放不下就就近挪一格 / 换个朝向，并说明「已自动调整」
+//   都不行 → 明确说「出界」还是「压到别的飞机」，并给出下一步动作
 const Scene = require('./base')
 const theme = require('../core/theme')
 const draw = require('../core/draw')
+const fit = require('../core/fit')
 const Button = require('../widgets/button')
 const Board = require('../widgets/board')
 const planeIcon = require('../widgets/plane-icon')
 const ui = require('../widgets/ui')
 const dialog = require('../core/dialog')
 const api = require('../shared/services/cloudApi')
-const { getAbsoluteCells, validatePlacement, randomDeploy } = require('../shared/utils/plane')
+const { getAbsoluteCells, randomDeploy } = require('../shared/utils/plane')
 const { createMatrix } = require('../shared/utils/board')
 const { BOARD_SIZE, MIN_PLANES, MAX_PLANES, TIMEOUT } = require('../shared/config/rules')
 
 const ROTATION_LABEL = ['↑', '→', '↓', '←']
+
+/** 拖拽时允许自动吸附的最大格数（超过这个距离就不硬塞，免得飞机莫名跳远） */
+const SNAP_RADIUS = 2
 
 class Deploy extends Scene {
   constructor(app) {
@@ -157,52 +167,77 @@ class Deploy extends Scene {
       size: g.board.size,
       cells: this.cells(),
       marks: this.marks(),
+      dim: this.dimMap(),
       selectable: !this.waiting && !this.readying
     }
   }
 
   cells() {
     const m = createMatrix(BOARD_SIZE, '')
-    this.placed.forEach(function (p) {
+    this.placed.forEach(function (p, i) {
       p.cells.forEach(function (c) {
-        // 机头单独标出来，玩家才看得出这架飞机朝哪边（旋转/推演都靠它）
-        m[c.row - 1][c.col - 1] = c.isHead ? 'head' : 'plane'
+        // 带上身份下标 p：
+        //   ① 布阵时用它给每架上不同的色（theme.planePalette）
+        //   ② 机头格里印出 1/2/3 序号 —— 颜色负责扫一眼，序号负责确认是哪一架
+        m[c.row - 1][c.col - 1] = { s: c.isHead ? 'head' : 'plane', p: i }
       })
     })
     return m
   }
 
+  /** 当前焦点之外的那几架 → 降饱和，让被选 / 被拖的那架跳出来 */
+  dimMap() {
+    const out = {}
+    let focus = -1
+    if (this.drag) focus = this.drag.idx
+    else if (this.selected >= 0) focus = this.selected
+    if (focus < 0 || focus >= this.placed.length) return out
+    this.placed.forEach(function (p, i) {
+      if (i === focus) return
+      p.cells.forEach(function (c) { out[c.row + ',' + c.col] = true })
+    })
+    return out
+  }
+
   /**
-   * 叠加层：选中描边 + 拖拽预览
-   * 拖拽时**不改动 cells**，而是用 marks 叠一层半透明预览——
-   * 这样「原位置留痕 + 目标位置预览」能同屏看到，玩家知道飞机从哪来、要落到哪。
+   * 叠加层：选中描边 + 拖拽预览 + 自动吸附候选
+   *
+   * 拖拽时**不改动 cells**，而是用 marks 叠一层——
+   * 这样「原位置留痕 + 手指位置 + 将要落到哪」能同屏看到，
+   * 玩家不用猜「松手会发生什么」。
    */
   marks() {
     const out = {}
-
-    // 选中：整架描边
-    if (this.selected >= 0 && this.selected < this.placed.length && !this.drag) {
-      this.placed[this.selected].cells.forEach(function (c) {
-        out[c.row + ',' + c.col] = 'select'
-      })
+    const put = function (cells, kind) {
+      for (let i = 0; i < cells.length; i++) {
+        out[cells[i].row + ',' + cells[i].col] = kind
+      }
     }
 
-    // 拖拽
     if (this.drag) {
-      const p = this.placed[this.drag.idx]
-      if (p) {
-        const moved = this.drag.row !== p.anchorRow || this.drag.col !== p.anchorCol
-        if (moved) {
-          p.cells.forEach(function (c) {
-            if (!out[c.row + ',' + c.col]) out[c.row + ',' + c.col] = 'fade'
-          })
-        }
-        const ghost = getAbsoluteCells(p.planeId, this.drag.row, this.drag.col, p.rotation)
-        const kind = this.drag.valid ? 'ghostOk' : 'ghostBad'
-        ghost.forEach(function (c) {
-          out[c.row + ',' + c.col] = kind
-        })
+      const d = this.drag
+      const p = this.placed[d.idx]
+      if (!p) return out
+
+      // ① 原位置留痕（位置真的变了才留，原地按着不留）
+      if (d.row !== p.anchorRow || d.col !== p.anchorCol || (d.fit && d.fit.moved)) {
+        put(p.cells, 'fade')
       }
+
+      if (d.valid) {
+        // ② 手指位置就能放 → 实心预览，松手即落
+        put(d.fit.cells, 'ghostOk')
+      } else {
+        // ③ 手指位置放不下 → 红框 + 斜线，并画出「其实会落到这儿」
+        put(getAbsoluteCells(p.planeId, d.row, d.col, p.rotation), 'ghostBad')
+        if (d.fit) put(d.fit.cells, 'hint')
+      }
+      return out
+    }
+
+    // 选中：整架描边
+    if (this.selected >= 0 && this.selected < this.placed.length) {
+      put(this.placed[this.selected].cells, 'select')
     }
     return out
   }
@@ -215,10 +250,15 @@ class Deploy extends Scene {
     const g = this.geo
     const c = theme.color
 
-    // 顶部提示：随进度 / 选中态变化，永远告诉玩家「现在能做什么」
+    // 顶部提示：随进度 / 选中态 / 拖拽态变化，永远告诉玩家「现在能做什么」
     let tip
     if (this.waiting || this.readying) {
       tip = '等待对手就绪…'
+    } else if (this.drag) {
+      const d = this.drag
+      if (d.valid) tip = '松手就把第 ' + (d.idx + 1) + ' 架放到这里'
+      else if (d.fit) tip = fit.describeReason(d.reason) + ' · 松手放到最近的空位'
+      else tip = fit.describeReason(d.reason) + ' · 松手留在原位'
     } else if (this.selected >= 0) {
       tip = '第 ' + (this.selected + 1) + ' 架已选中 · 再点机头旋转'
     } else if (this.placed.length >= this.planeCount) {
@@ -251,32 +291,63 @@ class Deploy extends Scene {
     g.statusSlots.forEach(function (s, i) {
       const on = i < this.placed.length
       const isSel = this.selected === i
-      if (isSel) {
+      const isDrag = !!this.drag && this.drag.idx === i
+      if (isSel || isDrag) {
         draw.fillRect(ctx, s.x, s.y, s.w, s.h, c.primaryLight, u(theme.radius.md))
         draw.strokeRect(ctx, s.x, s.y, s.w, s.h, c.primary, u(theme.radius.md), 2)
       }
+      // 状态条棋子用**和棋盘完全一致的身份色**：
+      // 棋盘上第 3 架是紫的，这里第 3 个槽也是紫的，两者形成对应关系。
+      // 这也是颜色系统的自解释图例——不用额外写「配色说明」。
+      // （槽位只有 36px，图标里的格太小印不下序号，序号只在棋盘机头格里出现）
+      const pal = theme.color.planePalette[i % theme.color.planePalette.length]
       planeIcon.render(ctx, s.x + u(4), s.y + u(4), s.w - u(8), {
         on: on,
-        rotation: on ? this.placed[i].rotation : 0
+        rotation: on ? this.placed[i].rotation : 0,
+        color: pal.body,
+        headColor: pal.head
       })
     }, this)
 
-    // 第一行：已放数量 + 当前作用对象的朝向（短，避免撞上棋子）
-    const hasSel = this.selected >= 0 && this.selected < this.placed.length
-    const rotLabel = hasSel ? this.placed[this.selected].rotation : this.rotation
-    const line1 = this.placed.length + ' / ' + this.planeCount + ' · 朝 ' + ROTATION_LABEL[rotLabel]
+    // 第一行：数量 + 当前作用对象的朝向（拖拽时切到「正在移动第几架」）
+    const d = this.drag
+    let line1
+    if (d && this.placed[d.idx]) {
+      line1 = '移动第 ' + (d.idx + 1) + ' 架 · 朝 ' + ROTATION_LABEL[this.placed[d.idx].rotation]
+    } else {
+      const hasSel = this.selected >= 0 && this.selected < this.placed.length
+      const rotLabel = hasSel ? this.placed[this.selected].rotation : this.rotation
+      line1 = this.placed.length + ' / ' + this.planeCount + ' · 朝 ' + ROTATION_LABEL[rotLabel]
+    }
     draw.text(ctx, draw.ellipsis(ctx, line1, g.x + g.w - g.statusTextX - u(24), u(theme.size.body), 500),
       g.statusTextX, g.statusSlots[0].y + u(22), {
         size: u(theme.size.body), weight: 500, color: c.text
       })
 
-    // 第二行：操作说明（不做隐藏手势，全写在明处）
-    const hint = this.selected >= 0
-      ? '再点机头旋转 · 按住机头拖走'
-      : '点机头选中 · 按住机头拖拽'
-    draw.text(ctx, hint, g.x + u(24), g.statusHintY, {
-      size: u(theme.size.tiny), color: c.textMuted
-    })
+    // 第二行：操作说明（不做隐藏手势，全写在明处；非法时换红字说清后果）
+    let hint
+    let hintColor = c.textMuted
+    if (d) {
+      if (d.valid) {
+        hint = '松手放下 · 蓝框就是落点'
+      } else if (d.fit) {
+        hint = '虚线框 = 会自动落到这里'
+        hintColor = c.primary
+      } else {
+        hint = fit.describeReason(d.reason) + ' · 松手留在原位'
+        hintColor = c.danger
+      }
+    } else if (this.selected >= 0) {
+      hint = '再点机头旋转 · 按住机头拖走'
+    } else if (this.placed.length >= this.planeCount) {
+      hint = '点任意机头可选中调整'
+    } else if (!this.placed.length) {
+      hint = '点棋盘任意格放置 · 落点即机头'
+    } else {
+      hint = '点机头选中 · 按住机头拖拽'
+    }
+    draw.text(ctx, draw.ellipsis(ctx, hint, g.w - u(48), u(theme.size.tiny)),
+      g.x + u(24), g.statusHintY, { size: u(theme.size.tiny), color: hintColor })
 
     /* ---- 操作栏 ---- */
     const hasSel2 = this.selected >= 0
@@ -341,28 +412,61 @@ class Deploy extends Scene {
     }
 
     if (this.placed.length >= this.planeCount) {
-      this.app.toast('已放满 ' + this.planeCount + ' 架，点「就绪」开始对局')
+      this.app.toast('已放满 ' + this.planeCount + ' 架 · 点机头可选中调整')
       return
     }
 
-    const cells = getAbsoluteCells('standard', row, col, this.rotation)
-    const others = []
-    this.placed.forEach(function (q) { others.push.apply(others, q.cells) })
-    const check = validatePlacement(cells, others)
+    this.placeAt(row, col)
+  }
 
-    if (!check.ok) {
-      this.app.toast(check.reason === 'overlap' ? '这里与已有飞机重叠' : '这里放不下，会超出棋盘')
+  /**
+   * 在 (row,col) 放一架。
+   * 放不下时不直接拒绝，而是就近找一个能落的位置 / 朝向（理由见 core/fit.js）：
+   * 玩家点的是「大概这儿」，差一格还要他重来一次，纯属浪费操作。
+   */
+  placeAt(row, col) {
+    const occupied = fit.occupiedExcept(this.placed, -1)
+    const reason = fit.checkAt('standard', row, col, this.rotation, occupied)
+
+    if (!reason) {
+      this.pushPlane(row, col, this.rotation)
       return
     }
-    this.placed.push({
+
+    const near = fit.findFit({
       planeId: 'standard',
       anchorRow: row,
       anchorCol: col,
       rotation: this.rotation,
+      occupied: occupied,
+      allowMove: true,
+      allowRotate: true,
+      maxRadius: SNAP_RADIUS,
+      prefer: 'move'
+    })
+
+    if (!near) {
+      this.app.toast(fit.describeReason(reason) + ' · 换个位置试试')
+      return
+    }
+
+    this.pushPlane(near.anchorRow, near.anchorCol, near.rotation)
+    if (near.moved && near.turned) this.app.toast('这里放不下 · 已挪到最近的空位并转向')
+    else if (near.moved) this.app.toast('这里放不下 · 已挪到最近的空位')
+    else this.app.toast('这个方向放不下 · 已自动转为朝 ' + ROTATION_LABEL[near.rotation])
+  }
+
+  pushPlane(row, col, rotation) {
+    const cells = getAbsoluteCells('standard', row, col, rotation)
+    this.placed.push({
+      planeId: 'standard',
+      anchorRow: row,
+      anchorCol: col,
+      rotation: rotation,
       cells: cells
     })
-    this.layout()   // 状态条多了可点的棋子
-    this.app.toast('已放置第 ' + this.placed.length + ' 架')
+    this.rotation = rotation   // 下一架沿用这个朝向，连放多架更省事
+    this.layout()              // 状态条多了一个可点的棋子
   }
 
   /** 点状态条里的飞机棋子 → 选中那一架 */
@@ -380,32 +484,87 @@ class Deploy extends Scene {
     const cell = Board.cellAt(this.geo.board, x, y)
     if (!cell) return
     const owner = this.findPlaneAt(cell.row, cell.col)
-    // 只有按在机头上才进入拖拽候选：机头是这架飞机的「抓手」
-    if (owner && owner.isHead) {
-      this._press = { idx: owner.idx, x: x, y: y }
+    if (!owner || !owner.isHead) return   // 机头是这架飞机的「抓手」
+
+    const p = this.placed[owner.idx]
+    // 记下「按下时手指在哪一格 + 机头在哪一格」，后面用**增量**算落点。
+    // 不能直接拿「手指当前所在格」当机头：玩家按住机头的下半格时，
+    // 一开始就会让飞机往上跳一格，手感是「抓不稳」。
+    this._press = {
+      idx: owner.idx,
+      grabRow: cell.row,
+      grabCol: cell.col,
+      baseRow: p.anchorRow,
+      baseCol: p.anchorCol,
+      lastRow: null,
+      lastCol: null,
+      dragged: false
     }
   }
 
   onTouchMove(x, y, dx, dy, moved) {
-    if (!this._press) return
+    const pr = this._press
+    if (!pr) return
     if (!moved) return
 
-    const idx = this._press.idx
-    const p = this.placed[idx]
+    const p = this.placed[pr.idx]
     if (!p) { this._press = null; return }
 
     const cell = Board.cellAt(this.geo.board, x, y)
-    // 手指划出棋盘时保持上一个合法落点，划回来还能接住
-    const row = cell ? cell.row : (this.drag ? this.drag.row : p.anchorRow)
-    const col = cell ? cell.col : (this.drag ? this.drag.col : p.anchorCol)
+    let row
+    let col
+    if (cell) {
+      row = pr.baseRow + (cell.row - pr.grabRow)
+      col = pr.baseCol + (cell.col - pr.grabCol)
+      pr.lastRow = row
+      pr.lastCol = col
+    } else if (pr.lastRow != null) {
+      // 手指划出棋盘：保持上一个指向，划回来还能接住（不要一出手就清空预览）
+      row = pr.lastRow
+      col = pr.lastCol
+    } else {
+      return
+    }
+    pr.dragged = true
 
-    const cells = getAbsoluteCells(p.planeId, row, col, p.rotation)
-    const others = []
-    this.placed.forEach(function (q, i) { if (i !== idx) others.push.apply(others, q.cells) })
-    const check = validatePlacement(cells, others)
+    const occupied = fit.occupiedExcept(this.placed, pr.idx)
+    const reason = fit.checkAt(p.planeId, row, col, p.rotation, occupied)
+
+    let snap
+    if (!reason) {
+      snap = {
+        anchorRow: row,
+        anchorCol: col,
+        rotation: p.rotation,
+        cells: getAbsoluteCells(p.planeId, row, col, p.rotation),
+        dist: 0, moved: false, turned: false
+      }
+    } else {
+      // 放不下 ≠ 卡住。在附近找最近的能落点，先把「会落到哪」画出来。
+      // 但**不改朝向**：玩家表达的是「想挪到这儿」，没表达「想转」，
+      // 自动转向会让摆好的朝向被系统动掉。转向只在他按旋转时才做。
+      snap = fit.findFit({
+        planeId: p.planeId,
+        anchorRow: row,
+        anchorCol: col,
+        rotation: p.rotation,
+        occupied: occupied,
+        allowMove: true,
+        allowRotate: false,
+        maxRadius: SNAP_RADIUS,
+        prefer: 'move'
+      })
+    }
 
     this.selected = -1   // 进入拖拽即退出选中（拖拽本身有更明确的视觉）
-    this.drag = { idx: idx, row: row, col: col, valid: check.ok }
+    this.drag = {
+      idx: pr.idx,
+      row: row,
+      col: col,
+      valid: !reason,
+      reason: reason || '',
+      fit: snap
+    }
   }
 
   onTouchEnd(x, y) {
@@ -416,39 +575,98 @@ class Deploy extends Scene {
     this._press = null
     if (!p) return
 
-    if (!d.valid) {
-      this.app.toast('这里放不下，飞机留在原位')
+    const target = d.fit
+    if (!target) {
+      // 附近确实没地方 → 留在原位，并说清是撞到了还是出界了
+      this.app.toast(fit.describeReason(d.reason) + ' · 已留在原位')
       return
     }
-    if (d.row === p.anchorRow && d.col === p.anchorCol) return
+    if (target.anchorRow === p.anchorRow && target.anchorCol === p.anchorCol) {
+      return   // 手抖了一下又回原位，不打扰
+    }
 
-    p.anchorRow = d.row
-    p.anchorCol = d.col
-    p.cells = getAbsoluteCells(p.planeId, d.row, d.col, p.rotation)
-    this.app.toast('已移动 · 机头在 第 ' + d.row + ' 行 第 ' + d.col + ' 列')
+    p.anchorRow = target.anchorRow
+    p.anchorCol = target.anchorCol
+    p.cells = target.cells
+    this.app.toast(d.valid
+      ? '已移动第 ' + (d.idx + 1) + ' 架'
+      : fit.describeReason(d.reason) + ' · 已移到最近的空位')
   }
 
   /* ---- 旋转 / 移除 ---- */
 
-  /** 以机头为轴顺时针旋转 90°；非法（压到别的飞机 / 出界）则拒绝并说明原因 */
+  /**
+   * 以机头为轴旋转。
+   *
+   * 【为什么不直接「转不了就拒绝」】
+   *   贴边或被围住时按一下没反应，玩家会以为按钮坏了，只能反复按 —— 这才是真麻烦。
+   *   所以按四级回退找一个能转的方案，并且**每次都明确告诉玩家最后转成了哪个方向**：
+   *     ① 原地转 90°
+   *     ② 转 90° 会撞 → 就近挪 1~2 格再转（保持「转 90°」的意图）
+   *     ③ 90° 彻底不行 → 试 180° / 270°（方向会写进提示，不会静默转歪）
+   *     ④ 四个方向都放不下 → 告诉他下一步该干什么（拖走）
+   */
   rotatePlane(idx) {
     const p = this.placed[idx]
     if (!p) return false
-    const rot = (p.rotation + 1) % 4
-    const cells = getAbsoluteCells(p.planeId, p.anchorRow, p.anchorCol, rot)
-    const others = []
-    this.placed.forEach(function (q, i) { if (i !== idx) others.push.apply(others, q.cells) })
+    const occupied = fit.occupiedExcept(this.placed, idx)
+    const target = (p.rotation + 1) % 4
 
-    const check = validatePlacement(cells, others)
-    if (!check.ok) {
-      this.app.toast(check.reason === 'overlap' ? '转过去会压到别的飞机' : '转过去会超出棋盘')
-      return false
+    // ① 原地转 90°
+    if (!fit.checkAt(p.planeId, p.anchorRow, p.anchorCol, target, occupied)) {
+      this.applyRotation(idx, target, p.anchorRow, p.anchorCol)
+      this.app.toast('第 ' + (idx + 1) + ' 架朝向 ' + ROTATION_LABEL[target])
+      return true
     }
-    p.rotation = rot
-    p.cells = cells
-    this.rotation = rot   // 下一架沿用当前朝向，连放多架同一方向更省事
-    this.app.toast('第 ' + (idx + 1) + ' 架朝向 ' + ROTATION_LABEL[rot])
-    return true
+
+    // ② 转过去会撞 → 就近挪一格再转
+    const near = fit.findFit({
+      planeId: p.planeId,
+      anchorRow: p.anchorRow,
+      anchorCol: p.anchorCol,
+      rotation: target,
+      occupied: occupied,
+      allowMove: true,
+      allowRotate: false,
+      maxRadius: SNAP_RADIUS,
+      prefer: 'move'
+    })
+    if (near) {
+      this.applyRotation(idx, target, near.anchorRow, near.anchorCol)
+      this.app.toast('转过去放不下 · 已挪开 ' + (near.dist === 1 ? '一格' : near.dist + ' 格') + '再转')
+      return true
+    }
+
+    // ③ 90° 彻底不行 → 试 180° / 270°（优先原地不动）
+    const alt = fit.findFit({
+      planeId: p.planeId,
+      anchorRow: p.anchorRow,
+      anchorCol: p.anchorCol,
+      rotation: target,
+      occupied: occupied,
+      allowMove: true,
+      allowRotate: true,
+      maxRadius: SNAP_RADIUS,
+      prefer: 'rotate'
+    })
+    if (alt) {
+      this.applyRotation(idx, alt.rotation, alt.anchorRow, alt.anchorCol)
+      this.app.toast('这个方向放不下 · 已转为朝 ' + ROTATION_LABEL[alt.rotation])
+      return true
+    }
+
+    // ④ 四个方向都放不下：卡在角上或被包住了
+    this.app.toast('四个方向都放不下 · 按住机头拖到空旷处')
+    return false
+  }
+
+  applyRotation(idx, rotation, row, col) {
+    const p = this.placed[idx]
+    p.rotation = rotation
+    p.anchorRow = row
+    p.anchorCol = col
+    p.cells = getAbsoluteCells(p.planeId, row, col, rotation)
+    this.rotation = rotation   // 下一架沿用当前朝向，连放多架同一方向更省事
   }
 
   /** 操作栏「旋转」：有选中转选中的，否则转最近一架，都没有则切待放朝向 */

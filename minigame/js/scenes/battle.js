@@ -408,14 +408,19 @@ class Battle extends Scene {
 
   myCells() {
     const m = createMatrix(BOARD_SIZE, '')
-    ;(this.myDeploy || []).forEach(function (p) {
+    ;(this.myDeploy || []).forEach(function (p, i) {
       const abs = getAbsoluteCells(p.planeId, p.anchorRow, p.anchorCol, p.rotation)
-      // 自己的飞机自己当然看得见，机头单独标出，便于推演对方机头可能在的位置
-      abs.forEach(function (cell) { m[cell.row - 1][cell.col - 1] = cell.isHead ? 'head' : 'plane' })
+      // 自己的飞机自己当然看得见，机头单独标出（印序号 i+1），便于推演对方机头可能在的位置。
+      // 身份色沿用布阵阶段的配色：布阵时第 2 架是青的，打到这里还是青的，
+      // 于是「哪一架被打残了、还剩几架完好」一眼就知道，不用去数格子。
+      abs.forEach(function (cell) {
+        m[cell.row - 1][cell.col - 1] = { s: cell.isHead ? 'head' : 'plane', p: i }
+      })
     })
     const inc = this.incoming || {}
     Object.keys(inc).forEach(function (k) {
       const parts = k.split(',')
+      // 命中态直接用字符串覆盖：打中的格子要看「打成了什么」，不该再显示身份色
       m[Number(parts[0]) - 1][Number(parts[1]) - 1] = inc[k]
     })
     return m

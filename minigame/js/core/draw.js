@@ -54,6 +54,32 @@ function line(ctx, x1, y1, x2, y2, color, width) {
 }
 
 /**
+ * 虚线
+ *
+ * 手工分段实现，不用 ctx.setLineDash()：
+ *   ① 小游戏基础库对 setLineDash 的支持不一致（部分安卓机上是空实现）；
+ *   ② 用 line() 拼装后，测试桩不需要额外方法就能断言「画了虚线」。
+ * @param {number} dash 实线段长
+ * @param {number} gap  间隔长
+ */
+function dashedLine(ctx, x1, y1, x2, y2, color, width, dash, gap) {
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const len = Math.sqrt(dx * dx + dy * dy)
+  if (len < 0.5) return
+  const d = dash || 6
+  const g = gap == null ? d : gap
+  const ux = dx / len
+  const uy = dy / len
+  let p = 0
+  while (p < len) {
+    const e = Math.min(p + d, len)
+    line(ctx, x1 + ux * p, y1 + uy * p, x1 + ux * e, y1 + uy * e, color, width || 1)
+    p = e + g
+  }
+}
+
+/**
  * 文字
  * @param {Object} o { x, y, size, color, weight, align, baseline, maxWidth }
  */
@@ -93,5 +119,5 @@ function background(ctx, layout) {
 }
 
 module.exports = {
-  roundRectPath, fillRect, strokeRect, circle, line, text, measure, ellipsis, background
+  roundRectPath, fillRect, strokeRect, circle, line, dashedLine, text, measure, ellipsis, background
 }

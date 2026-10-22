@@ -229,14 +229,26 @@ class Room extends Scene {
       ui.row(ctx, L, card.x + u(28), g.rowPlane.y, card.w - u(56), '飞机数量', this.planeCount + ' 架')
 
       // 点亮式选择器：亮几架 = 本局几架，点第 k 个直接设为 k
+      //
+      // 每个棋子用**它将来在棋盘上的身份色**（第 1 蓝 / 第 2 青 / 第 3 紫）。
+      // 这样从选数量那一刻起，颜色和编号的对应关系就已经建立了 ——
+      // 到了布阵页，玩家看到紫色那架不会觉得是系统随便上的色。
       g.planeSlots.forEach(function (s, i) {
         const on = i < this.planeCount
+        const pal = theme.color.planePalette[i % theme.color.planePalette.length]
         draw.fillRect(ctx, s.x, s.y, s.w, s.h, on ? c.primaryLight : c.gray, u(theme.radius.md))
-        if (on) draw.strokeRect(ctx, s.x, s.y, s.w, s.h, c.primary, u(theme.radius.md), 1.5)
+        if (on) {
+          draw.strokeRect(ctx, s.x, s.y, s.w, s.h, pal.body, u(theme.radius.md), 1.5)
+          draw.text(ctx, String(i + 1), s.x + s.w - u(22), s.y + u(24), {
+            size: u(theme.size.tiny), weight: 600, color: pal.body, align: 'center'
+          })
+        }
         const icon = u(66)
         planeIcon.render(ctx, s.x + (s.w - icon) / 2, s.y + (s.h - icon) / 2, icon, {
           rotation: 0,
-          on: on
+          on: on,
+          color: pal.body,
+          headColor: pal.head
         })
       }, this)
 

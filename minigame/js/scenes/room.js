@@ -5,6 +5,7 @@ const Scene = require('./base')
 const theme = require('../core/theme')
 const draw = require('../core/draw')
 const Button = require('../widgets/button')
+const planeIcon = require('../widgets/plane-icon')
 const ui = require('../widgets/ui')
 const dialog = require('../core/dialog')
 const share = require('../core/share')
@@ -108,7 +109,8 @@ class Room extends Scene {
     } else {
       this.zone(g.back.x, g.back.y, g.back.w, g.back.h, this.onCancel.bind(this))
 
-      const cardH = (this.mode === 'join') ? u(240) : u(190)
+      const cardH = (this.mode === 'join') ? u(240)
+        : (this.mode === 'create' ? u(360) : u(258))
       g.card = { x: x, y: y, w: w, h: cardH }
 
       if (this.mode === 'join') {
@@ -117,22 +119,33 @@ class Room extends Scene {
         this.zone(x, y + u(28), w, u(72), this.onEditRoomNo.bind(this))
         this.zone(x, y + u(128), w, u(72), this.onEditPassword.bind(this))
       } else {
-        g.rowPlane = { y: y + u(64) }
-        g.rowPwd = { y: y + u(138) }
+        g.rowPlane = { y: y + u(56) }
+
+        // 飞机数量：一排可点的飞机棋子，点亮几架就是几架（直接操作，比 +/− 快）
+        const slotsY = y + u(96)
+        const slotW = u(88)
+        const slotH = u(96)
+        const slotGap = u(12)
+        g.planeSlots = []
+        for (let i = 0; i < MAX_PLANES; i++) {
+          const sx = x + u(28) + i * (slotW + slotGap)
+          const rect = { x: sx, y: slotsY, w: slotW, h: slotH }
+          g.planeSlots.push(rect)
+          this.zone(sx, slotsY, slotW, slotH, this.onPickPlane.bind(this, i + 1))
+        }
+        g.slotHintX = x + u(28) + MAX_PLANES * slotW + (MAX_PLANES - 1) * slotGap + u(20)
+
         const sw = u(96)
         const swX = x + w - u(32) - sw
-        const swY = g.rowPwd.y - u(30)
+        const pwdY = y + u(238)
+        g.rowPwd = { y: pwdY }
+        const swY = pwdY - u(30)
         g.switch = { x: swX, y: swY, w: sw, h: u(56) }
         this.zone(swX - u(20), swY - u(8), sw + u(40), u(72), this.onTogglePassword.bind(this))
 
-        const st = u(64)
-        g.minus = { x: x + w - u(32) - st * 2 - u(24), y: g.rowPlane.y - st / 2, w: st, h: st }
-        g.plus = { x: x + w - u(32) - st, y: g.rowPlane.y - st / 2, w: st, h: st }
-        this.zone(g.minus.x, g.minus.y, st, st, this.onDecPlane.bind(this))
-        this.zone(g.plus.x, g.plus.y, st, st, this.onIncPlane.bind(this))
-
         if (this.usePassword) {
-          g.pwdBoxY = y + cardH - u(12)
+          // 固定在密码行下方，不跟着 cardH 走——否则卡片一加高，密码文字就滑出卡片底
+          g.pwdBoxY = g.rowPwd.y + u(72)
         }
       }
 
@@ -213,16 +226,25 @@ class Room extends Scene {
         size: u(theme.size.tiny), color: c.textMuted
       })
     } else {
-      ui.row(ctx, L, card.x + u(28), g.rowPlane.y, card.w - u(56), '飞机数量', String(this.planeCount))
-      // 加减给个圆底，否则两个孤零零的符号不像按钮，玩家根本想不到可以调
-      const cr = g.minus.w / 2
-      draw.circle(ctx, g.minus.x + cr, g.minus.y + cr, cr, c.gray)
-      draw.circle(ctx, g.plus.x + cr, g.plus.y + cr, cr, c.gray)
-      draw.text(ctx, '−', g.minus.x + g.minus.w / 2, g.minus.y + g.minus.h / 2, {
-        size: u(theme.size.h2), color: c.primaryDark, align: 'center'
+      ui.row(ctx, L, card.x + u(28), g.rowPlane.y, card.w - u(56), '飞机数量', this.planeCount + ' 架')
+
+      // 点亮式选择器：亮几架 = 本局几架，点第 k 个直接设为 k
+      g.planeSlots.forEach(function (s, i) {
+        const on = i < this.planeCount
+        draw.fillRect(ctx, s.x, s.y, s.w, s.h, on ? c.primaryLight : c.gray, u(theme.radius.md))
+        if (on) draw.strokeRect(ctx, s.x, s.y, s.w, s.h, c.primary, u(theme.radius.md), 1.5)
+        const icon = u(66)
+        planeIcon.render(ctx, s.x + (s.w - icon) / 2, s.y + (s.h - icon) / 2, icon, {
+          rotation: 0,
+          on: on
+        })
+      }, this)
+
+      draw.text(ctx, '点亮几架 = 本局几架', g.slotHintX, g.planeSlots[0].y + u(38), {
+        size: u(theme.size.tiny), color: c.textMuted
       })
-      draw.text(ctx, '＋', g.plus.x + g.plus.w / 2, g.plus.y + g.plus.h / 2, {
-        size: u(theme.size.h2), color: c.primaryDark, align: 'center'
+      draw.text(ctx, '每架 10 格', g.slotHintX, g.planeSlots[0].y + u(74), {
+        size: u(theme.size.tiny), color: c.textMuted
       })
 
       if (this.mode === 'create') {
@@ -263,12 +285,11 @@ class Room extends Scene {
 
   /* ---------------- 交互 ---------------- */
 
-  onIncPlane() {
-    if (this.planeCount < MAX_PLANES) { this.planeCount++; }
-  }
-
-  onDecPlane() {
-    if (this.planeCount > MIN_PLANES) { this.planeCount--; }
+  /** 点第 n 个飞机棋子 → 数量设为 n（点亮式选择，一步到位；不需要 +/− 反复点） */
+  onPickPlane(n) {
+    if (this.loading || this.mode === 'waiting') return
+    if (n < MIN_PLANES || n > MAX_PLANES) return
+    this.planeCount = n
   }
 
   onTogglePassword() {

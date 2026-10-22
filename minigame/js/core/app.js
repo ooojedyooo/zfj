@@ -108,20 +108,30 @@ function createApp(opts) {
       if (s && s.onTouchStart) s.onTouchStart(x, y)
     },
 
+    /**
+     * 移动
+     * onTouchMove(x, y, dx, dy, moved)
+     *   moved 由这里统一判定（>10px），场景不要自己定阈值——
+     *   两处阈值不一致就会出现「场景认为在拖、这里认为没动 → 抬手还触发一次点击」。
+     */
     touchMove: function (x, y) {
       const t = this._touch
       if (!t) return
-      if (Math.abs(x - t.x) > 10 || Math.abs(y - t.y) > 10) t.moved = true
+      if (!t.moved && (Math.abs(x - t.x) > 10 || Math.abs(y - t.y) > 10)) t.moved = true
+      const s = this.scene
+      if (s && s.onTouchMove) s.onTouchMove(x, y, x - t.x, y - t.y, !!t.moved)
     },
 
     touchEnd: function (x, y) {
       const t = this._touch
       this._touch = null
-      if (!t || t.moved) return
+      if (!t) return
       const s = this.scene
       if (!s) return
-      if (s.onTouchEnd) s.onTouchEnd(x, y)
-      s.tap(t.x, t.y)
+      // onTouchEnd 无论是否拖动都要通知（拖拽落位就靠它）
+      if (s.onTouchEnd) s.onTouchEnd(x, y, t)
+      // 拖动超过阈值不算点击：拖飞机 / 拖动列表都不会误触发 tap
+      if (!t.moved) s.tap(t.x, t.y)
     },
 
     /* ---------------- 全局浮层 ---------------- */

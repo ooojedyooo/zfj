@@ -35,8 +35,16 @@ module.exports = {
     plane: '#378ADD',        // 机体：实心蓝，与白色底板对比明确
     planeHead: '#0C447C',    // 机头：再深一档 + 白点标记，一眼看出朝向
     planeSelected: '#185FA5',
+    planeOff: '#DCE3EA',     // 熄灭态机体（飞机棋子未点亮）
+    planeOffHead: '#C3CFDB', // 熄灭态机头
     miss: '#B9B7AD',
     disabled: '#EAE8E1',
+
+    // 拖拽 / 选中
+    ghostOk: 'rgba(24, 95, 165, 0.55)',   // 可落位预览
+    ghostBad: 'rgba(226, 75, 74, 0.50)',  // 非法落位预览
+    dragOrigin: 'rgba(55, 138, 221, 0.18)', // 拖拽时原位置留痕
+    selectRing: '#185FA5',
 
     // 蒙层
     mask: 'rgba(12, 68, 124, 0.92)'

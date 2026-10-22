@@ -33,6 +33,19 @@ function cellRect(o, row, col) {
   }
 }
 
+/**
+ * 像素坐标 → 格子坐标（拖拽落位用）
+ * @returns {{row:number,col:number}|null} 落在棋盘外返回 null
+ */
+function cellAt(o, x, y) {
+  const m = metrics(o)
+  if (x < m.x || y < m.y || x >= m.x + m.size || y >= m.y + m.size) return null
+  const col = Math.floor((x - m.x) / m.cell) + 1
+  const row = Math.floor((y - m.y) / m.cell) + 1
+  if (row < 1 || row > BOARD_SIZE || col < 1 || col > BOARD_SIZE) return null
+  return { row: row, col: col }
+}
+
 /** 棋盘（含底板）的总占用矩形，供场景排版用 */
 function outerRect(o, u) {
   const pad = u(PAD)
@@ -65,11 +78,13 @@ function render(ctx, o, u) {
   const pad = u ? u(PAD) : PAD
   const cell = m.cell
 
-  // 底板（加描边：白底与浅灰页面背景对比太弱，不描边会看不出棋盘边界）
+  // 底板（先铺一层极淡的偏移块当阴影，比 shadowBlur 便宜且在真机上更稳）
   const ox = m.x - pad
   const oy = m.y - pad
   const ow = m.size + pad * 2
   const oh = m.size + pad * 2
+  draw.fillRect(ctx, ox, oy + pad * 0.5, ow, oh, 'rgba(12, 68, 124, 0.05)', theme.radius.lg)
+  // 加描边：白底与浅灰页面背景对比太弱，不描边会看不出棋盘边界
   draw.fillRect(ctx, ox, oy, ow, oh, c.boardBg, theme.radius.lg)
   draw.strokeRect(ctx, ox, oy, ow, oh, c.boardFrame, theme.radius.lg, 1)
 
@@ -124,6 +139,38 @@ function render(ctx, o, u) {
     draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, c.primaryLight, cell * 0.1)
     draw.strokeRect(ctx, x + 1, y + 1, cell - 2, cell - 2, c.primary, cell * 0.1, Math.max(2, cell * 0.12))
   }
+
+  // 叠加层（拖拽预览 / 选中描边）
+  // marks: { 'row,col': 'fade' | 'ghostOk' | 'ghostBad' | 'select' }
+  // 分两遍画：先铺色（fade / ghost），再描边（select），避免描边被后画的色块盖住。
+  const marks = o.marks
+  if (marks) {
+    for (let r = 1; r <= BOARD_SIZE; r++) {
+      for (let col = 1; col <= BOARD_SIZE; col++) {
+        const st = marks[r + ',' + col]
+        if (!st || st === 'select') continue
+        const x = m.x + (col - 1) * cell
+        const y = m.y + (r - 1) * cell
+        if (st === 'fade') {
+          draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, c.dragOrigin, cell * 0.1)
+        } else {
+          const col2 = st === 'ghostBad' ? c.ghostBad : c.ghostOk
+          draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, col2, cell * 0.1)
+          draw.strokeRect(ctx, x + 1, y + 1, cell - 2, cell - 2,
+            st === 'ghostBad' ? c.danger : c.primary, cell * 0.1, Math.max(1.5, cell * 0.09))
+        }
+      }
+    }
+    for (let r = 1; r <= BOARD_SIZE; r++) {
+      for (let col = 1; col <= BOARD_SIZE; col++) {
+        if (marks[r + ',' + col] !== 'select') continue
+        const x = m.x + (col - 1) * cell
+        const y = m.y + (r - 1) * cell
+        draw.strokeRect(ctx, x + 1, y + 1, cell - 2, cell - 2,
+          c.selectRing, cell * 0.1, Math.max(2, cell * 0.1))
+      }
+    }
+  }
 }
 
-module.exports = { layout, render, cellRect, metrics, outerRect, BOARD_SIZE }
+module.exports = { layout, render, cellRect, cellAt, metrics, outerRect, BOARD_SIZE }

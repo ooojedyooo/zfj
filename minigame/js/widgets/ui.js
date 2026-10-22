@@ -20,8 +20,11 @@ function titleBlock(ctx, layout, title, subtitle) {
 /** 卡片底板 */
 function card(ctx, layout, x, y, w, h) {
   const u = layout.u.bind(layout)
-  draw.fillRect(ctx, x, y, w, h, theme.color.card, u(theme.radius.lg))
-  draw.strokeRect(ctx, x, y, w, h, theme.color.border, u(theme.radius.lg), 1)
+  const r = u(theme.radius.lg)
+  // 柔和阴影：往下一层的极淡块。比 shadowBlur 便宜得多（每帧都画，真机上差一个量级）
+  draw.fillRect(ctx, x, y + u(4), w, h, 'rgba(12, 68, 124, 0.05)', r)
+  draw.fillRect(ctx, x, y, w, h, theme.color.card, r)
+  draw.strokeRect(ctx, x, y, w, h, theme.color.border, r, 1)
 }
 
 /** 卡片内的一行「标签 —— 值」 */

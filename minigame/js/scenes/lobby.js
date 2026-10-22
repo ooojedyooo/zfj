@@ -5,6 +5,7 @@ const Scene = require('./base')
 const theme = require('../core/theme')
 const draw = require('../core/draw')
 const Button = require('../widgets/button')
+const planeIcon = require('../widgets/plane-icon')
 const ui = require('../widgets/ui')
 const dialog = require('../core/dialog')
 const share = require('../core/share')
@@ -92,6 +93,14 @@ class Lobby extends Scene {
     const L = this.layoutInfo
     const g = this.geo
     const c = theme.color
+
+    // 右上角飞机水印：纯装饰，很淡，用来压住右侧大片空白
+    const wm = u(220)
+    planeIcon.render(ctx, L.W - u(20) - wm, L.safeTop + u(34), wm, {
+      rotation: 1,
+      color: 'rgba(24, 95, 165, 0.10)',
+      headColor: 'rgba(12, 68, 124, 0.16)'
+    })
 
     draw.text(ctx, '炸飞机', g.x, g.titleY, {
       size: u(theme.size.big), weight: 500, color: c.primaryDark

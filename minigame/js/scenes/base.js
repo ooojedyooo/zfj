@@ -46,6 +46,7 @@ class Scene {
   render() {}
 
   onTouchStart() {}
+  onTouchMove() {}
   onTouchEnd() {}
 
   /** 触摸点击分发（由 app 调用） */

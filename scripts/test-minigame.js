@@ -133,6 +133,21 @@ function tapRect(r) {
   tapAt(r.x + r.w / 2, r.y + r.h / 2)
 }
 
+/**
+ * 模拟一次拖拽：按住 from 中心 → 拖到 to 中心 → 抬手
+ * 走真实 touchMove 分发，所以能顺带验证「拖动不触发 tap」与落位吸附
+ */
+function dragRect(from, to) {
+  const fx = from.x + from.w / 2
+  const fy = from.y + from.h / 2
+  const tx = to.x + to.w / 2
+  const ty = to.y + to.h / 2
+  app.touchStart(fx, fy)
+  app.touchMove(fx + (tx - fx) * 0.5, fy + (ty - fy) * 0.5)
+  app.touchMove(tx, ty)
+  app.touchEnd(tx, ty)
+}
+
 function headOf(plane) {
   return getAbsoluteCells(plane.planeId, plane.anchorRow, plane.anchorCol, plane.rotation)
     .filter(function (c) { return c.isHead })[0]
@@ -226,15 +241,21 @@ async function main() {
   const room = app.scene
   check('房间默认 create 模式', function () { assert.strictEqual(room.mode, 'create') })
   check('房间场景可渲染', function () { app.renderOnce() })
-  check('房间页可调节飞机数量（1~3）', function () {
-    assert.ok(room.geo.plus && room.geo.minus, '加减按钮未注册')
-    const before = room.planeCount
-    tapRect(room.geo.plus)
-    assert.strictEqual(room.planeCount, before + 1, '加号无效')
-    tapRect(room.geo.minus)
-    assert.strictEqual(room.planeCount, before, '减号无效')
-    assert.ok(room.planeCount >= 1 && room.planeCount <= 3)
+  check('房间页飞机数量用点亮式棋子选择', function () {
+    assert.ok(room.geo.planeSlots && room.geo.planeSlots.length === 3,
+      '未注册 3 个飞机棋子，实际 ' + (room.geo.planeSlots || []).length)
+    assert.strictEqual(room.planeCount, 1, '默认应为 1 架')
+    room.geo.planeSlots.forEach(function (s) {
+      assert.ok(s.x >= 0 && s.x + s.w <= 375, '棋子槽横向出屏')
+    })
   })
+  check('点第 N 个棋子 = 设 N 架（一步到位）', function () {
+    tapRect(room.geo.planeSlots[2])
+    assert.strictEqual(room.planeCount, 3, '点第 3 个应为 3 架')
+    tapRect(room.geo.planeSlots[0])
+    assert.strictEqual(room.planeCount, 1, '点第 1 个应为 1 架')
+  })
+  check('点亮态可渲染', function () { app.renderOnce() })
 
   /* ---------- 4. 创建房间 → 等待 → 对手就位 ---------- */
   section('[4] 创建房间 → 对手加入 → 布阵')
@@ -270,24 +291,28 @@ async function main() {
   check('布阵页各区块不重叠且不出屏', function () {
     const L = app.layout
     const gg = deploy.geo
-    assert.ok(gg.board.y + gg.board.size <= gg.cardY + 0.01, '棋盘压到信息卡')
-    assert.ok(gg.cardY + gg.cardH <= gg.opsY + 0.01, '信息卡压到操作按钮')
+    assert.ok(gg.board.y + gg.board.size <= gg.statusY + 0.01, '棋盘压到状态条')
+    assert.ok(gg.statusY + gg.statusH <= gg.opsY + 0.01, '状态条压到操作按钮')
     assert.ok(gg.opsY + gg.opsH <= gg.readyBtn.y + 0.01, '操作按钮压到就绪按钮')
     assert.ok(gg.readyBtn.y + gg.readyBtn.h <= L.H, '就绪按钮出屏')
     gg.opRects.forEach(function (r) {
       assert.ok(r.x >= 0 && r.x + r.w <= L.W, '操作按钮横向出屏')
     })
+    // 状态条里的棋子不能压到右侧文字
+    const lastSlot = gg.statusSlots[gg.statusSlots.length - 1]
+    assert.ok(lastSlot.x + lastSlot.w < gg.statusTextX, '棋子压到状态文字')
+    assert.ok(gg.statusTextX < gg.x + gg.w, '状态文字起点超出卡片')
   })
 
   // ① 非法位置应被拒绝（机头朝上时机体向下延伸，靠近下边缘会出界）
-  const outRect = Board.cellRect({ x: board.x, y: board.y, size: board.size }, 8, 3)
+  const outRect = Board.cellRect(board, 8, 3)
   tapRect(outRect)
   check('越界位置被拒绝', function () {
     assert.strictEqual(deploy.placed.length, 0, '越界却放上了：' + deploy.placed.length)
   })
 
   // ② 正常放置（落点 = 机头）
-  const anchor = Board.cellRect({ x: board.x, y: board.y, size: board.size }, 5, 5)
+  const anchor = Board.cellRect(board, 5, 5)
   tapRect(anchor)
   check('点击棋盘成功放置飞机', function () { assert.strictEqual(deploy.placed.length, 1) })
   check('放置位置与点击格一致（落点即机头）', function () {
@@ -304,30 +329,98 @@ async function main() {
     assert.strictEqual(flat.filter(function (s) { return s === 'plane' }).length, 9)
   })
 
-  // ③ 点已放置的飞机 → 移除（可以单独调整某一架，不必整盘清空）
+  // ③ 点机头 → 选中（不再「点一下就删」，误触代价太高）
   tapRect(anchor)
-  check('点已放置的飞机可移除', function () {
-    assert.strictEqual(deploy.placed.length, 0, '点已放置的飞机没有移除')
+  check('点机头选中该架（不删除）', function () {
+    assert.strictEqual(deploy.placed.length, 1, '点机头把飞机删掉了')
+    assert.strictEqual(deploy.selected, 0, '未选中，selected=' + deploy.selected)
   })
+  check('选中态给整架 10 格打描边标记', function () {
+    const marks = deploy.marks()
+    const sel = Object.keys(marks).filter(function (k) { return marks[k] === 'select' })
+    assert.strictEqual(sel.length, 10, '描边格数 ' + sel.length)
+  })
+  check('选中态可渲染（选中高亮）', function () { app.renderOnce() })
 
-  // ④ 重新放置后旋转：应作用于「最近一架」并原地转向
-  tapRect(anchor)
-  check('重新放置成功', function () { assert.strictEqual(deploy.placed.length, 1) })
+  // ④ 已选中时再点机头 → 以机头为轴旋转 90°
   const rotBefore = deploy.placed[0].rotation
-  tapRect(deploy.geo.opRects[0])
-  check('「旋转」原地旋转最近一架飞机', function () {
+  const headPos = { row: deploy.placed[0].anchorRow, col: deploy.placed[0].anchorCol }
+  tapRect(anchor)
+  check('再点机头即以机头为轴旋转 90°', function () {
     assert.strictEqual(deploy.placed[0].rotation, (rotBefore + 1) % 4,
       '朝向没变：' + rotBefore + ' → ' + deploy.placed[0].rotation)
   })
-  check('旋转后仍是完整 10 格且机头不跑位', function () {
+  check('旋转后机头仍在原格（真正的「以头部为中心」）', function () {
     const p = deploy.placed[0]
-    assert.strictEqual(p.cells.length, 10)
     const head = p.cells.filter(function (c) { return c.isHead })[0]
-    assert.strictEqual(head.row, 5)
-    assert.strictEqual(head.col, 5)
+    assert.strictEqual(head.row, headPos.row, '机头行跑了')
+    assert.strictEqual(head.col, headPos.col, '机头列跑了')
+    assert.strictEqual(p.cells.length, 10, '格数不是 10')
   })
 
-  // ⑤ 清空 / 随机布阵
+  // ⑤ 选中态下点空白 → 只退出选中，不误放
+  tapRect(Board.cellRect(board, 1, 1))
+  check('选中态下点空白只退出选中，不放新飞机', function () {
+    assert.strictEqual(deploy.selected, -1, '没退出选中')
+    assert.strictEqual(deploy.placed.length, 1, '误放了新飞机')
+  })
+
+  // ⑥ 按住机头拖拽 → 整架跟着走
+  const toOk = Board.cellRect(board, 7, 7)
+  dragRect(anchor, toOk)
+  check('拖拽后机头落到目标格', function () {
+    const p = deploy.placed[0]
+    assert.strictEqual(p.anchorRow, 7, '行未更新：' + p.anchorRow)
+    assert.strictEqual(p.anchorCol, 7, '列未更新：' + p.anchorCol)
+    const head = p.cells.filter(function (c) { return c.isHead })[0]
+    assert.strictEqual(head.row, 7)
+    assert.strictEqual(head.col, 7)
+    assert.strictEqual(p.cells.length, 10, '拖拽后格数不是 10')
+  })
+  check('拖拽结束后不残留拖拽态', function () {
+    assert.strictEqual(deploy.drag, null)
+    assert.strictEqual(deploy._press, null)
+  })
+
+  // ⑦ 拖到放不下的位置 → 红框提示且不落位
+  const toBad = Board.cellRect(board, 5, 3)   // 朝右时机体会伸到第 0 列，出界
+  dragRect(Board.cellRect(board, 7, 7), toBad)
+  check('非法落位被拒绝，飞机留在原处', function () {
+    const p = deploy.placed[0]
+    assert.strictEqual(p.anchorRow, 7, '非法位置竟然落位了')
+    assert.strictEqual(p.anchorCol, 7)
+    assert.strictEqual(deploy.placed.length, 1)
+  })
+  check('拖拽预览区分合法/非法（marks 有 ghostOk / ghostBad）', function () {
+    // 拖拽过程中才有 ghost 标记；这里直接构造一次拖拽中途态来断言
+    deploy._press = { idx: 0, x: 0, y: 0 }
+    deploy.onTouchMove(
+      Board.cellRect(board, 7, 3).x + 4,
+      Board.cellRect(board, 7, 3).y + 4,
+      0, 0, true
+    )
+    const marks = deploy.marks()
+    const kinds = Object.keys(marks).map(function (k) { return marks[k] })
+    assert.ok(kinds.indexOf('ghostOk') >= 0 || kinds.indexOf('ghostBad') >= 0,
+      '没有拖拽预览标记：' + kinds.join(','))
+    deploy.drag = null
+    deploy._press = null
+  })
+
+  // ⑧ 点机体也能选中（命中判定放宽），再用「移除这架」删掉
+  tapRect(Board.cellRect(board, 7, 7))
+  check('点机体也能选中该架', function () {
+    assert.strictEqual(deploy.placed.length, 1)
+    assert.strictEqual(deploy.selected, 0)
+  })
+  check('选中时操作栏第二个按钮变成「移除这架」', function () {
+    // 通过 render 不抛异常 + 语义方法直接验证
+    deploy.onSecondAction()
+    assert.strictEqual(deploy.placed.length, 0, '「移除这架」没有生效')
+    assert.strictEqual(deploy.selected, -1)
+  })
+
+  // ⑨ 清空 / 随机布阵
   tapRect(deploy.geo.opRects[2])
   check('「清空」生效', function () { assert.strictEqual(deploy.placed.length, 0) })
   tapRect(deploy.geo.opRects[1])

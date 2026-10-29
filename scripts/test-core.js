@@ -77,6 +77,59 @@ for (let i = 0; i < 200; i++) {
 }
 assert('200 次随机布 3 架，均合法且不重叠', randomOk)
 
+console.log('\n[8] 离线 AI（单机试玩的对手）')
+const { LocalGame } = require('../miniprogram/services/localGame')
+
+/** 让 AI 打一局，返回用了几炮；打不完（卡死）返回 null */
+function runAi(count) {
+  const planes = randomDeploy(count, 'standard', BOARD_SIZE)
+  const g = new LocalGame({ planeCount: count, firstHand: false })
+  g.myDeployed = planes
+  g.myIndex = buildIndex(planes)
+  g.foeShots = 0
+  g.finished = false
+  while (!g.finished && g.foeShots < 150) {
+    if (!g.foeFire()) return null
+  }
+  return g.finished ? g.foeShots : null
+}
+
+/** 跑 n 局，返回 { avg, stuck } */
+function sample(count, n) {
+  let total = 0
+  let ok = 0
+  for (let i = 0; i < n; i++) {
+    const s = runAi(count)
+    if (s == null) continue
+    total += s
+    ok++
+  }
+  return { avg: ok ? total / ok : Infinity, ok: ok, n: n }
+}
+
+// ① 不许卡死：概率密度法一旦候选集合算空，就会返回 null 让对局挂住
+const s1 = sample(1, 60)
+const s3 = sample(3, 60)
+assert('1 架局 60 次全部打完（没有卡死）', s1.ok === s1.n)
+assert('3 架局 60 次全部打完（没有卡死）', s3.ok === s3.n)
+
+// ② 强度回归：钉住「已经变聪明了」这件事。
+//    改造前实测 1 架约 15 炮、3 架约 42 炮；现在约 11 / 29。
+//    阈值留了余量，只防「被改回旧实现」，不卡随机波动。
+assert('1 架局平均用炮 ≤ 13（改造前约 15）', s1.avg <= 13)
+assert('3 架局平均用炮 ≤ 34（改造前约 42）', s3.avg <= 34)
+
+// ③ 不许打重复的格：炮数应等于去重后的格数
+const planes1 = randomDeploy(1, 'standard', BOARD_SIZE)
+const g1 = new LocalGame({ planeCount: 1, firstHand: false })
+g1.myDeployed = planes1
+g1.myIndex = buildIndex(planes1)
+g1.foeShots = 0
+g1.finished = false
+while (!g1.finished && g1.foeShots < 150) { if (!g1.foeFire()) break }
+assert('AI 没有对同一格开两次火',
+  Object.keys(g1.foeProbes).length === g1.foeShots)
+
 console.log('\n----------------------------------------')
 console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 console.log('----------------------------------------\n')

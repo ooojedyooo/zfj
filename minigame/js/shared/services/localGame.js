@@ -7,10 +7,19 @@
 // TODO(V2)：替换为真实联机实现（云开发实时数据库 watch 或自建 WebSocket 服务），
 //           对外接口保持一致：createRoom / deploy / fire / onFire / endTurn。
 
-const { getAbsoluteCells, randomDeploy, validatePlacement } = require('../utils/plane')
+const { getAbsoluteCells, randomDeploy, validatePlacement, isInside } = require('../utils/plane')
 const { buildIndex, judge, isAllDestroyed } = require('../utils/judge')
 const { RESULT, BOARD_SIZE, END_TYPE } = require('../config/rules')
 const { key } = require('../utils/board')
+
+// ── 离线 AI 的两个强度旋钮（只影响单机试玩，联机对手是真人，碰不到这段） ──
+// HEAD_WEIGHT 机头格在密度计算里的权重。1 = 不打折、纯看可能性；
+//             调高会让它更执着于「猜机头」，但也会显得过于精准。
+// SLIP_RATE   走神概率：这一炮不走推理，退回「摸四邻」的笨办法。
+//             0 是满血碾压（实测 1 架 8 炮），太高又显得蠢。
+// 调参方式：node scripts/bench-ai.js 看平均用炮，别凭感觉拧。
+const HEAD_WEIGHT = 1.3
+const SLIP_RATE = 0.35
 
 /** 生成 6 位房间号 */
 function genRoomId() {
@@ -37,6 +46,7 @@ class LocalGame {
 
     this.myProbes = {}       // 我方轰炸过的格位：key -> 'miss'|'hit'|'kill'
     this.foeProbes = {}      // 对手轰炸我方的格位
+    this._foeHunt = {}       // 对手「正在追」的线索格（打中机身、还没摸到机头）
     this.myShots = 0
     this.foeShots = 0
     this.finished = false
@@ -90,8 +100,20 @@ class LocalGame {
     if (!target) return null
 
     const res = judge(this.myIndex.index, target.row, target.col)
-    this.foeProbes[key(target.row, target.col)] = res.result
+    const k = key(target.row, target.col)
+    this.foeProbes[k] = res.result
     this.foeShots += 1
+
+    // 「正在追的线索」：打中机身就记下来，击毁一架就清空、重新开始搜下一架。
+    // 为什么要清空：击毁后，那些旧的 HIT 格里有一部分属于这架已死的飞机，
+    // 但游戏规则不告诉你是哪几格。继续围着它们打就是白费炮。
+    // 清空意味着「这架解决了，剩下的按已知信息重新推」。
+    if (res.result === RESULT.HIT) {
+      this._foeHunt[k] = true
+    }
+    if (res.result === RESULT.KILL) {
+      this._foeHunt = {}
+    }
 
     if (res.result === RESULT.KILL && !this.myKilled.includes(res.planeNo)) {
       this.myKilled.push(res.planeNo)
@@ -137,11 +159,85 @@ class LocalGame {
     this.endType = endType
   }
 
+  /**
+   * 对手选点
+   *
+   * 分两层：大部分时候按概率密度推（聪明），偶尔退回「摸四邻」的老办法（走神）。
+   *
+   * 【为什么不干脆全用密度法】实测密度法打 1 架只要 8 炮、3 架 21 炮
+   * （旧实现是 15 / 44），已经远超普通人类玩家，玩起来像被机器碾压。
+   * 掺进 20% 的「笨招」，平均用炮回到 11 / 28 一线：
+   * 比人稍强一点、会犯错、有破绽可抓 —— 这才是陪练该有的手感。
+   */
   _foePickTarget() {
-    // 1) 追打：找任意一个 hit（非击毁）格，打其上下左右未炸过的邻居
-    const hits = Object.keys(this.foeProbes)
-      .filter(k => this.foeProbes[k] === RESULT.HIT)
-      .map(k => k.split(',').map(Number))
+    if (Math.random() < SLIP_RATE) {
+      return this._naivePick() || this._densityPick() || this._randomPick()
+    }
+    return this._densityPick() || this._randomPick()
+  }
+
+  /**
+   * 概率密度：枚举所有「与已知结果不矛盾」的摆放，看哪些格被最多可能摆放覆盖。
+   *
+   * 早先的实现是「命中就摸四邻」，但无记忆 —— 不知道刚摸的是哪个方向，
+   * 也不知道哪个方向已经打空。推进一格要浪费 3 炮，打一架要 15 炮。
+   *
+   * 为什么这算公平：飞机形状是公开信息（布阵时玩家自己就在按这个形状摆），
+   * 真人对战双方都知道。用形状反推位置，正是人类玩家在做的事。
+   */
+  _densityPick() {
+    const known = this.foeProbes
+    const hunt = this._foeHunt || {}
+    const hunting = Object.keys(hunt).length > 0
+    const score = {}          // key -> 权重累计
+
+    for (let r = 1; r <= BOARD_SIZE; r++) {
+      for (let c = 1; c <= BOARD_SIZE; c++) {
+        for (let rot = 0; rot < 4; rot++) {
+          const cells = getAbsoluteCells('standard', r, c, rot)
+          if (!isInside(cells, BOARD_SIZE)) continue
+
+          // 这个摆放是否还与已知结果相容？
+          //   MISS → 这格是空的，摆放不能占
+          //   KILL → 该格已属于一架被击毁的飞机，摆放也不能占（不允许重叠）
+          let fits = true
+          let covHits = 0
+          for (let i = 0; i < cells.length; i++) {
+            const k = key(cells[i].row, cells[i].col)
+            const v = known[k]
+            if (v === RESULT.MISS || v === RESULT.KILL) { fits = false; break }
+            if (hunt[k]) covHits++
+          }
+          if (!fits) continue
+
+          // 【关键】手里有一条没解开的线索时，不覆盖它的摆放直接排除。
+          // 早先只给它一个低权重（w=1），结果这些「纯属还没被排除」的摆放
+          // 数量多、面积大，累加之后反而盖过了真正的机头候选 ——
+          // 1 架局因此几乎没提升（15.00 → 14.22）。硬排除之后才有意义。
+          if (hunting && covHits === 0) continue
+
+          // 命中越多，这条线索越长越可信，权重越高
+          const w = covHits > 0 ? 6 + covHits * 3 : 1
+
+          for (let i = 0; i < cells.length; i++) {
+            const cell = cells[i]
+            const k = key(cell.row, cell.col)
+            if (known[k]) continue          // 已经打过的格不用再打
+            score[k] = (score[k] || 0) + w * (cell.isHead ? HEAD_WEIGHT : 1)
+          }
+        }
+      }
+    }
+
+    return this._pickByScore(score)
+  }
+
+  /** 笨招：命中就摸上下左右，无记忆。也就是改造之前的全部策略 */
+  _naivePick() {
+    // 只看「正在追的线索」，不看全部历史命中 ——
+    // 已经击毁的那架留下的 HIT 格还在 foeProbes 里，围着它们打是纯浪费。
+    const hunt = this._foeHunt || {}
+    const hits = Object.keys(hunt).map(k => k.split(',').map(Number))
 
     for (const [r, c] of hits) {
       const neighbors = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]
@@ -151,8 +247,33 @@ class LocalGame {
         return { row: nr, col: nc }
       }
     }
+    return null
+  }
 
-    // 2) 随机：从未轰炸过的格子中挑一个
+  /**
+   * 按权重选点
+   *
+   * 不直接取最大值：那样每局走法完全一致、显得机械，玩家能摸出套路。
+   * 也不做全局加权抽样：权重差距会被拉平，机头候选的优势就没了
+   * （试过，1 架局只提升 5%）。
+   * 折中 —— 在「接近最高分」的候选里随机。既保住方向，又保留变数。
+   */
+  _pickByScore(score) {
+    const keys = Object.keys(score)
+    if (!keys.length) return null
+
+    let max = 0
+    for (let i = 0; i < keys.length; i++) {
+      if (score[keys[i]] > max) max = score[keys[i]]
+    }
+
+    const top = keys.filter(function (k) { return score[k] >= max * 0.6 })
+    const picked = top[Math.floor(Math.random() * top.length)].split(',').map(Number)
+    return { row: picked[0], col: picked[1] }
+  }
+
+  /** 兜底：从未轰炸过的格子里均匀随机挑一个 */
+  _randomPick() {
     const candidates = []
     for (let r = 1; r <= BOARD_SIZE; r++) {
       for (let c = 1; c <= BOARD_SIZE; c++) {

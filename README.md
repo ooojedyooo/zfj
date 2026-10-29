@@ -46,7 +46,9 @@ cloudfunctions/*/shared/    minigame/js/shared/       （小程序自身的 conf
 - **逻辑唯一真源**：玩法逻辑只写一遍，小游戏端与云函数拿的都是同步出来的副本
 - **改完 `miniprogram/{config,utils,services}` 必须重跑 `node scripts/sync-shared.js`**，
   并**重新上传 `room` / `game` 云函数**，否则两端逻辑会漂移
-- 小程序端 `miniprogram/` 保留：它是逻辑真源，也是可运行的参照实现（有 WXML 时更容易改 UI）
+- `miniprogram/` 里**只有 `config` / `utils` / `services` 是真源**，`pages` / `components`
+  那套 WXML 界面层**已冻结**（2026-10-29 决定：不再补新功能、不再跟规则改动同步）。
+  冻结不影响任何构建产物——`sync-shared` 本来就只扫那三个目录
 
 ---
 
@@ -106,7 +108,7 @@ zfj/
 │       │   ├── battle.js         #     对战（上下双棋盘 + 两步式出招 + 快捷表情）
 │       │   └── result.js         #     结算（战报分享 / 邀请再战）
 │       └── shared/               #   ← sync-shared.js 同步产出，勿手改
-├── miniprogram/                  # 小程序版（逻辑真源 + 参照实现）
+├── miniprogram/                  # 共享真源（config/utils/services）+ 已冻结的 WXML 界面层
 │   ├── app.js / app.json / app.wxss
 │   ├── config/                   # 【数据驱动配置】新增内容不改核心代码
 │   │   ├── rules.js              #   游戏规则常量

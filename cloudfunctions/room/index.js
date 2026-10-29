@@ -15,17 +15,11 @@ const _ = db.command
 const ROOMS = 'rooms'
 const GAMES = 'games'
 
-const { MIN_PLANES, MAX_PLANES, TIMEOUT } = require('./shared/config/rules')
-const { clampStepSeconds, normalizeRoomName } = require('./shared/utils/room')
+const { TIMEOUT } = require('./shared/config/rules')
+const { clampPlaneCount, clampStepSeconds, normalizeRoomName } = require('./shared/utils/room')
 
 const ok = (data) => ({ ok: true, data })
 const fail = (msg, code) => ({ ok: false, msg: msg, code: code || 'ERROR' })
-
-/** 房间号限制在 1~3 架 */
-function clampPlanes(n) {
-  const v = Number(n) || MIN_PLANES
-  return Math.min(MAX_PLANES, Math.max(MIN_PLANES, v))
-}
 
 /** 正则元字符转义：房间名是用户输入，直接拼进 RegExp 会被 '.*' 之类的串打穿 */
 function escapeRegExp(s) {
@@ -56,6 +50,8 @@ function listItem(room) {
     roomId: room._id,
     roomNo: room.roomNo,
     roomName: room.roomName || '未命名房间',
+    // 架数必须给：玩家在列表上就要知道这一局打多大，不然点进去才发现不是想要的
+    planeCount: clampPlaneCount(room.planeCount),
     stepSeconds: room.stepSeconds || 30,
     hasPassword: !!room.hasPassword,
     players: (room.players || []).length,
@@ -84,7 +80,7 @@ exports.main = async (event) => {
 
 /* ---------------- 创建房间 ---------------- */
 async function createRoom(event, openid) {
-  const planeCount = clampPlanes(event.planeCount)
+  const planeCount = clampPlaneCount(event.planeCount)
   const password = event.password ? String(event.password).slice(0, 4) : ''
   const hasPassword = !!password
   const roomName = normalizeRoomName(event.roomName, '我的房间')
@@ -190,12 +186,18 @@ async function getPassword(roomId) {
 }
 
 /* ---------------- 随机匹配 ---------------- */
+/**
+ * 匹配**同架数**的房间。
+ *
+ * 架数不能事后改：它决定了这一局多大，布阵还要按它摆满。
+ * 所以「想打 1 架」和「想打 3 架」是两个池子，不能拿 3 架的房去凑 1 架的人。
+ */
 async function matchRoom(event, openid) {
-  const planeCount = clampPlanes(event.planeCount)
+  const planeCount = clampPlaneCount(event.planeCount)
 
-  // 1) 优先撮合已有的公开房
+  // 1) 优先撮合已有的公开房（同架数、还在等人）
   const pool = await db.collection(ROOMS)
-    .where({ isPublic: true, status: 'waiting' })
+    .where({ isPublic: true, status: 'waiting', planeCount })
     .orderBy('createdAt', 'asc')
     .limit(20)
     .get()

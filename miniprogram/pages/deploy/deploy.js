@@ -127,8 +127,16 @@ Page({
 
   /* ---------------- 就绪：提交云端（DEP-05 / DEP-06） ---------------- */
   async onReady() {
-    if (this.data.placed.length < MIN_PLANES) {
-      wx.showToast({ title: '至少布置 1 架飞机', icon: 'none' })
+    // 架数由房主开房时定死，必须**正好摆满**才能开局 —— 与云函数同一条规则，
+    // 否则这里放行、服务端回一个 PLANE_COUNT_MISMATCH，玩家只看到一句错误。
+    const need = this.data.planeCount
+    if (this.data.placed.length !== need) {
+      const diff = need - this.data.placed.length
+      wx.showToast({
+        title: diff > 0 ? '本局要 ' + need + ' 架，还差 ' + diff + ' 架'
+          : '本局只打 ' + need + ' 架，多了 ' + (-diff) + ' 架',
+        icon: 'none'
+      })
       return
     }
     if (this.data.readying || this.data.waitingOpponent) return

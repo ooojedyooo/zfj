@@ -5,16 +5,34 @@
 //   房主设的单步时长、房间名、超时自动轰炸的落点，这三件事客户端和服务端都要算。
 //   一旦写成两份，就会出现「界面显示 15 秒 / 服务端按 30 秒判超时」这种最难查的 bug。
 
-const { BOARD_SIZE, TURN_MIN, TURN_MAX, TURN_STEP, ROOM_NAME_MAX } = require('../config/rules')
+const {
+  BOARD_SIZE, MIN_PLANES, MAX_PLANES, TURN_MIN, TURN_MAX, ROOM_NAME_MAX
+} = require('../config/rules')
 const { key } = require('./board')
 
-/** 单步时长夹取：落在 5~30 秒并对齐到 5 秒档 */
+/**
+ * 本局架数夹取：1~3 的整数。
+ *
+ * 房主建房时就把它定死，之后布阵必须摆满同样多 —— 客户端、云函数、离线引擎
+ * 三处都要按同一个标准夹，否则会出现「房间上写 3 架，服务端按 1 架放行」。
+ */
+function clampPlaneCount(v) {
+  const n = Number(v)
+  if (!isFinite(n) || n <= 0) return MIN_PLANES
+  return Math.min(MAX_PLANES, Math.max(MIN_PLANES, Math.round(n)))
+}
+
+/**
+ * 单步时长夹取：落在 5~30 秒，**1 秒连续**（滑块拖动，不再对齐到 5 秒档）
+ *
+ * 不做整数对齐会出问题：滑块给的是像素换算出来的浮点值，
+ * 一旦某个环节把它原样存下来，就会出现「界面写 18 秒 / 服务端 18.37 秒超时」。
+ */
 function clampStepSeconds(v) {
   const n = Number(v)
   // NaN / '' / undefined 一律回落到默认值，不要静默变成 5 秒 —— 那会让玩家觉得「明明设了 30 却 5 秒就超时」
   if (!isFinite(n) || n <= 0) return require('../config/rules').TURN_DEFAULT
-  const snapped = Math.round(n / TURN_STEP) * TURN_STEP
-  return Math.min(TURN_MAX, Math.max(TURN_MIN, snapped))
+  return Math.min(TURN_MAX, Math.max(TURN_MIN, Math.round(n)))
 }
 
 /** 房间名清洗：去首尾空白、把连续空白压成一个空格、截断到最大字数 */
@@ -49,6 +67,7 @@ function pickAutoTarget(marks) {
 }
 
 module.exports = {
+  clampPlaneCount,
   clampStepSeconds,
   normalizeRoomName,
   pickAutoTarget

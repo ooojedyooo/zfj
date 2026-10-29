@@ -4,15 +4,18 @@
 const Scene = require('./base')
 const theme = require('../core/theme')
 const draw = require('../core/draw')
+const geom = require('../core/geom')
 const Button = require('../widgets/button')
+const Slider = require('../widgets/slider')
 const ui = require('../widgets/ui')
 const dialog = require('../core/dialog')
 const share = require('../core/share')
 const api = require('../shared/services/cloudApi')
 const profile = require('../shared/services/profile')
 const {
-  MAX_PLANES, TIMEOUT, TURN_MIN, TURN_MAX, TURN_DEFAULT, TURN_STEP, ROOM_NAME_MAX
+  MIN_PLANES, MAX_PLANES, TIMEOUT, TURN_MIN, TURN_MAX, TURN_DEFAULT, ROOM_NAME_MAX
 } = require('../shared/config/rules')
+const { clampPlaneCount } = require('../shared/utils/room')
 
 class Room extends Scene {
   constructor(app) {
@@ -23,7 +26,10 @@ class Room extends Scene {
     this.roomName = ''
     this.password = String(Math.floor(1000 + Math.random() * 9000))
     this.usePassword = false        // 默认不设密码 = 公开房间（房名可被搜到）
-    this.stepSeconds = TURN_DEFAULT // 每步限时，房主在 5~30 之间调
+    this.planeCount = MAX_PLANES    // 本局打几架 —— 房主在这里定死，布阵必须摆满
+    this.stepSeconds = TURN_DEFAULT // 每步限时，房主用滑块在 5~30 之间调
+    this.matchPlanes = MIN_PLANES    // 「随机匹配」要匹配几架的房间
+    this._dragSlider = false
     this.joinRoomNo = ''
     this.joinPassword = ''
     this.playerCount = 0
@@ -49,12 +55,16 @@ class Room extends Scene {
     this.phase = 0
     this.waitLeft = TIMEOUT.ROOM
     this.playerCount = 0
+    this._dragSlider = false
 
-    // 房间名默认取昵称；单步限时回到默认值 —— 每次开新房间都是一张干净的设置
+    // 房间名默认取昵称；架数与单步限时回到默认值 —— 每次开新房间都是一张干净的设置
     this.roomName = profile.nickname()
+    this.planeCount = MAX_PLANES
     this.stepSeconds = TURN_DEFAULT
     this.usePassword = false
     this.password = String(Math.floor(1000 + Math.random() * 9000))
+    // 从大厅的「快速匹配 · N 架」进来时带着架数，这里接住
+    this.matchPlanes = clampPlaneCount(p.planeCount)
 
     // 从「公开房间 / 搜索结果」点进来：房间已经建好了，直接进等待页
     // （不在这里重复 join，列表页已经把加入这一步做完了）
@@ -85,8 +95,11 @@ class Room extends Scene {
       self.layout()
     })
 
-    // 从结算页 / 大厅「再邀一局」进来：自动建房
-    if (p.auto) this.onCreate()
+    // 自动动作：创建房间 / 发起匹配。两者都是「点了就走」，不要再让人确认一次。
+    if (p.auto) {
+      if (this.mode === 'random') this.onMatch()
+      else this.onCreate()
+    }
   }
 
   onExit() {
@@ -134,10 +147,10 @@ class Room extends Scene {
     } else {
       this.zone(g.back.x, g.back.y, g.back.w, g.back.h, this.onCancel.bind(this))
 
-      // 卡片高度：join 两条输入框 / create 三行设置（+密码行）/ random 只有一句说明
+      // 卡片高度：join 两条输入框 / create 四行设置（+密码行）/ random 一句说明
       let cardH = u(200)
       if (this.mode === 'join') cardH = u(240)
-      if (this.mode === 'create') cardH = u(378) + (this.usePassword ? u(88) : 0)
+      if (this.mode === 'create') cardH = u(546) + (this.usePassword ? u(76) : 0)
       g.card = { x: x, y: y, w: w, h: cardH }
 
       if (this.mode === 'join') {
@@ -146,26 +159,49 @@ class Room extends Scene {
         this.zone(x, y + u(28), w, u(72), this.onEditJoinRoomNo.bind(this))
         this.zone(x, y + u(128), w, u(72), this.onEditJoinPassword.bind(this))
       } else if (this.mode === 'create') {
-        // 三行设置：房间名 / 每步限时 / 是否私密
-        // 顺序不是随便排的 —— 从上往下正好是「别人怎么找到我 → 打起来多快 → 谁能进来」，
+        // 四行设置，从上往下是「别人怎么找到我 → 打多大的一局 → 打多快 → 谁能进来」，
         // 也就是从公开到私密逐级收紧。
-        g.nameY = y + u(66)
-        g.stepY = y + u(166)
-        g.privY = y + u(266)
-        g.hintY = y + cardH - u(30)
+        g.nameY = y + u(64)
+        g.planeY = y + u(164)
+        g.stepY = y + u(268)
+        g.privY = y + u(428)
+        g.hintY = y + cardH - u(28)
 
-        // 房间名：整行可点，弹输入框改
-        this.zone(x, g.nameY - u(42), w, u(84), this.onEditRoomName.bind(this))
+        // ① 房间名：整行可点，弹输入框改
+        this.zone(x, g.nameY - u(40), w, u(80), this.onEditRoomName.bind(this))
 
-        // 每步限时步进器：− 数字 ＋
-        const sb = u(68)
-        g.stepMinus = { x: x + w - u(300), y: g.stepY - u(34), w: sb, h: sb }
-        g.stepPlus = { x: x + w - sb, y: g.stepY - u(34), w: sb, h: sb }
-        g.stepValueX = x + w - u(150)
-        this.zone(g.stepMinus.x, g.stepMinus.y, sb, sb, this.onStepDown.bind(this))
-        this.zone(g.stepPlus.x, g.stepPlus.y, sb, sb, this.onStepUp.bind(this))
+        // ② 架数：三段等宽，点一下即改。
+        //    这个值会跟着房间走：列表里显示它，进房后布阵**必须摆满**同样多。
+        const planeW = u(92)
+        const planeGap = u(10)
+        const planeH = u(56)
+        const planesX = x + w - u(28) - (planeW * 3 + planeGap * 2)
+        g.planeRects = []
+        for (let i = 0; i < 3; i++) {
+          const n = MIN_PLANES + i
+          const rect = {
+            x: planesX + i * (planeW + planeGap),
+            y: g.planeY - planeH / 2,
+            w: planeW,
+            h: planeH,
+            planes: n
+          }
+          g.planeRects.push(rect)
+          this.zone(rect.x, rect.y, rect.w, rect.h, this.onPickPlanes.bind(this, n))
+        }
 
-        // 私密开关
+        // ③ 每步限时：滑块，5~30 秒 1 秒连续。
+        //    不注册 zone —— 滑块是拖动控件，注册了 tap 就会「按下去跳一次、松手又跳一次」，
+        //    两次算出来的值未必一样，表现为数值自己乱跳。
+        const knobR = u(Slider.KNOB_R)
+        g.stepSlider = {
+          x: x + u(28) - knobR,
+          y: g.stepY + u(16),
+          w: (w - u(56)) + knobR * 2,
+          h: u(76)
+        }
+
+        // ④ 私密开关
         const sw = u(96)
         const swX = x + w - u(30) - sw
         g.switch = { x: swX, y: g.privY - u(28), w: sw, h: u(56) }
@@ -173,7 +209,7 @@ class Room extends Scene {
 
         if (this.usePassword) {
           // 固定跟在上一次开关之后的行位置，卡片高度一变密码行跟着下移，不会压到提示
-          g.pwdY = y + u(356)
+          g.pwdY = y + u(512)
           this.zone(x, g.pwdY - u(40), w, u(80), this.onEditRoomPassword.bind(this))
         }
       } else {
@@ -281,27 +317,36 @@ class Room extends Scene {
         })
         draw.line(ctx, lx, g.nameY + u(58), rx, g.nameY + u(58), c.border, 1)
 
-        // ② 每步限时（5~30 秒，步长 5 秒）
-        draw.text(ctx, '每步限时', lx, g.stepY, { size: body, color: c.text })
-        const plusOn = this.stepSeconds < TURN_MAX
-        const minusOn = this.stepSeconds > TURN_MIN
-        ;[[g.stepMinus, '−', minusOn], [g.stepPlus, '＋', plusOn]].forEach(function (it) {
-          const r = it[0]
-          draw.fillRect(ctx, r.x, r.y, r.w, r.h, it[2] ? c.gray : c.card, u(theme.radius.md))
-          draw.strokeRect(ctx, r.x, r.y, r.w, r.h, c.border, u(theme.radius.md), 1)
-          draw.text(ctx, it[1], r.x + r.w / 2, r.y + r.h / 2, {
-            size: u(theme.size.h3), color: it[2] ? c.text : c.textMuted, align: 'center'
+        // ② 飞机数量
+        draw.text(ctx, '飞机数量', lx, g.planeY, { size: body, color: c.text })
+        g.planeRects.forEach(function (r) {
+          const on = r.planes === this.planeCount
+          draw.fillRect(ctx, r.x, r.y, r.w, r.h, on ? c.primary : c.gray, u(theme.radius.sm))
+          draw.text(ctx, r.planes + ' 架', r.x + r.w / 2, r.y + r.h / 2, {
+            size: u(theme.size.small),
+            color: on ? '#FFFFFF' : c.text,
+            weight: on ? 500 : 400,
+            align: 'center'
           })
+        }, this)
+        draw.text(ctx, '双方都打 ' + this.planeCount + ' 架 · 布阵时要摆满才能开局',
+          lx, g.planeY + u(42), { size: u(theme.size.tiny), color: c.textMuted })
+        draw.line(ctx, lx, g.planeY + u(72), rx, g.planeY + u(72), c.border, 1)
+
+        // ③ 每步限时（滑块，1 秒连续）
+        draw.text(ctx, '每步限时', lx, g.stepY, { size: body, color: c.text })
+        draw.text(ctx, this.stepSeconds + ' 秒', rx, g.stepY, {
+          size: u(theme.size.h3), weight: 500, color: c.primaryDark, align: 'right'
         })
-        draw.text(ctx, this.stepSeconds + ' 秒', g.stepValueX, g.stepY, {
-          size: u(theme.size.h3), weight: 500, color: c.text, align: 'center'
+        Slider.render(ctx, u, g.stepSlider, {
+          value: this.stepSeconds, min: TURN_MIN, max: TURN_MAX
         })
-        draw.text(ctx, '超时未出招会自动轰炸一格，连续 5 次判负', lx, g.stepY + u(34), {
+        draw.text(ctx, '超时自动轰炸一格 · 连续 5 次判负', lx, g.stepY + u(112), {
           size: u(theme.size.tiny), color: c.textMuted
         })
-        draw.line(ctx, lx, g.stepY + u(62), rx, g.stepY + u(62), c.border, 1)
+        draw.line(ctx, lx, g.stepY + u(140), rx, g.stepY + u(140), c.border, 1)
 
-        // ③ 私密开关
+        // ④ 私密开关
         draw.text(ctx, this.usePassword ? '私密房间（需要密码）' : '公开房间（无需密码）', lx, g.privY, {
           size: body, color: c.text
         })
@@ -325,13 +370,15 @@ class Room extends Scene {
           })
         }
 
-        // 架数去哪儿了：明说，不然玩家会找「飞机数量」那一行
-        draw.text(ctx, '下一局打几架，在布阵页点「+」添 · 添几架就是几架',
+        // 底部把「这一局多大」再说一遍：玩家往下看的就是这两个数
+        draw.text(ctx,
+          this.planeCount + ' 架 · 每步 ' + this.stepSeconds + ' 秒 · ' +
+          (this.usePassword ? '私密' : '公开'),
           lx, g.hintY, { size: u(theme.size.tiny), color: c.textMuted })
       } else {
-        draw.text(ctx, '将为你匹配一位在线玩家，也可等待其他玩家加入',
+        draw.text(ctx, '正在为你找一间 ' + this.matchPlanes + ' 架的公开房…',
           card.x + u(28), g.hintY, { size: u(theme.size.tiny), color: c.textMuted })
-        draw.text(ctx, '打几架在布阵页决定 · 添几架就是几架',
+        draw.text(ctx, '暂时没有就替你开一间，等别人进来',
           card.x + u(28), g.hintY + u(32), { size: u(theme.size.tiny), color: c.textMuted })
       }
     }
@@ -390,17 +437,41 @@ class Room extends Scene {
     })
   }
 
-  /** 每步限时 −/+，夹在 5~30 秒，步长 5 秒 */
-  onStepDown() { this.setStep(this.stepSeconds - TURN_STEP) }
-  onStepUp() { this.setStep(this.stepSeconds + TURN_STEP) }
+  /** 点「1 架 / 2 架 / 3 架」—— 房主定这一局打几架 */
+  onPickPlanes(n) {
+    const v = clampPlaneCount(n)
+    if (v === this.planeCount) return
+    this.planeCount = v
+    this.layout()
+  }
 
   setStep(v) {
-    // 注意别写成 `Number(v) || TURN_DEFAULT`：0 是 falsy，从 5 秒再按一下 − 会跳回 30 秒
+    // 注意别写成 `Number(v) || TURN_DEFAULT`：0 是 falsy，拖到最左边会跳回默认值
     const n = Number(v)
-    const target = isFinite(n) ? Math.min(TURN_MAX, Math.max(TURN_MIN, n)) : TURN_DEFAULT
+    const target = isFinite(n) ? Math.min(TURN_MAX, Math.max(TURN_MIN, Math.round(n))) : TURN_DEFAULT
     if (target === this.stepSeconds) return
     this.stepSeconds = target
-    this.layout()
+    // 这里**不重排布局**：拖动时每一帧都会改值，重建 zones 纯属浪费；
+    // 数值文字在 render 里读 this.stepSeconds，本来就每帧刷新。
+  }
+
+  /* ---- 滑块拖动（只有创建页有） ---- */
+
+  onTouchStart(x, y) {
+    const r = this.geo && this.geo.stepSlider
+    if (!r || this.mode !== 'create') return
+    if (!geom.inRect(x, y, r)) return
+    this._dragSlider = true
+    this.setStep(Slider.valueAt(r, x, TURN_MIN, TURN_MAX))
+  }
+
+  onTouchMove(x, y) {
+    if (!this._dragSlider) return
+    this.setStep(Slider.valueAt(this.geo.stepSlider, x, TURN_MIN, TURN_MAX))
+  }
+
+  onTouchEnd() {
+    this._dragSlider = false
   }
 
   onEditJoinRoomNo() {
@@ -429,8 +500,7 @@ class Room extends Scene {
     this.layout()
     app.busy('创建中…')
     api.createRoom({
-      // 架数改由布阵页决定，这里只报「本局上限」；服务端按 1~3 架校验实际布阵
-      planeCount: MAX_PLANES,
+      planeCount: this.planeCount,
       roomName: this.roomName,
       stepSeconds: this.stepSeconds,
       password: this.usePassword ? this.password : ''
@@ -477,7 +547,7 @@ class Room extends Scene {
     this.loading = true
     this.layout()
     app.busy('匹配中…')
-    api.matchRoom({ planeCount: MAX_PLANES }).then(function (data) {
+    api.matchRoom({ planeCount: this.matchPlanes }).then(function (data) {
       app.hideBusy()
       self.loading = false
       self.enterWaiting(data)
@@ -491,6 +561,10 @@ class Room extends Scene {
 
   enterWaiting(data) {
     const app = this.app
+    // 玩家可能已经点了返回（网络请求还没回来）。这时再 enterWaiting 会：
+    //   ① 在别的场景上重建 layout；② 重新打开 watch；③ 对手一进来就把人拽到布阵页。
+    // 所以先确认「我还在前台」。
+    if (app.scene !== this) return
     app.globalData.match = {
       roomId: data.roomId,
       roomNo: data.roomNo,

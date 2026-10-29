@@ -89,7 +89,8 @@ const Board = require('../minigame/js/widgets/board')
 const theme = require('../minigame/js/core/theme')
 const planeFit = require('../minigame/js/core/fit')
 const { getAbsoluteCells } = require('../minigame/js/shared/utils/plane')
-const { BOARD_SIZE, MAX_PLANES, RESULT, END_TYPE } = require('../minigame/js/shared/config/rules')
+const { BOARD_SIZE, MAX_PLANES, TURN_MIN, TURN_MAX, TURN_DEFAULT, RESULT, END_TYPE } =
+  require('../minigame/js/shared/config/rules')
 
 /* ================= 断言脚手架 ================= */
 
@@ -225,43 +226,140 @@ async function main() {
   section('[3] 大厅 → 房间（触摸驱动）')
 
   const lobby = app.scene
-  check('大厅注册了 3 个主入口按钮', function () {
-    assert.ok(lobby.geo.buttons.length === 3, '实际 ' + lobby.geo.buttons.length)
+  check('大厅有「快速匹配」三张架数卡（1 / 2 / 3 架）', function () {
+    assert.strictEqual(lobby.geo.matchCards.length, 3, '实际 ' + lobby.geo.matchCards.length)
+    assert.deepStrictEqual(lobby.geo.matchCards.map(function (c) { return c.planes }), [1, 2, 3])
   })
-  check('「创建房间」按钮落在屏内', function () {
-    const b = lobby.geo.buttons[0]
-    assert.ok(b.x >= 0 && b.y >= 0 && b.x + b.w <= 375 && b.y + b.h <= 667)
+  check('三张匹配卡横排、等宽、不重叠', function () {
+    const cs = lobby.geo.matchCards
+    const w0 = cs[0].w
+    cs.forEach(function (c, i) {
+      assert.ok(Math.abs(c.w - w0) < 0.001, '第 ' + i + ' 张宽度不一致')
+      assert.ok(c.y === cs[0].y, '第 ' + i + ' 张没对齐')
+    })
+    assert.ok(cs[1].x > cs[0].x + cs[0].w, '第 2 张和第 1 张叠了')
+    assert.ok(cs[2].x > cs[1].x + cs[1].w, '第 3 张和第 2 张叠了')
+    assert.ok(cs[2].x + cs[2].w <= 375, '右侧溢出')
+    assert.ok(cs[0].y >= 0 && cs[0].y + cs[0].h <= 667, '纵向溢出')
   })
-  check('按钮竖排不重叠且间距一致', function () {
-    const b = lobby.geo.buttons
-    const gap = b[1].y - (b[0].y + b[0].h)
-    assert.ok(Math.abs(gap - (b[2].y - (b[1].y + b[1].h))) < 0.001, '间距不一致')
-    assert.ok(gap > 0, '按钮重叠')
+  check('匹配卡在创建按钮上方（最显眼的位置先给匹配）', function () {
+    const last = lobby.geo.matchCards[2]
+    assert.ok(last.y + last.h < lobby.geo.createBtn.y)
+  })
+  check('创建 / 浏览 / 搜索三个入口都在屏内且互不重叠', function () {
+    const bs = [lobby.geo.createBtn, lobby.geo.browseBtn, lobby.geo.searchBtn]
+    bs.forEach(function (b) {
+      assert.ok(b.x >= 0 && b.y >= 0 && b.x + b.w <= 375 && b.y + b.h <= 667, '出屏')
+    })
+    assert.ok(lobby.geo.createBtn.y + lobby.geo.createBtn.h < lobby.geo.browseBtn.y, '上下按钮重叠')
+    assert.ok(lobby.geo.browseBtn.x + lobby.geo.browseBtn.w < lobby.geo.searchBtn.x, '左右按钮重叠')
   })
 
-  tapRect(lobby.geo.buttons[0])
-  check('点击后进入房间场景', function () { assert.strictEqual(app.scene.name, 'room') })
+  // 点「2 架」那张卡：应当直接带着 planeCount=2 进房间页并自动发起匹配
+  tapRect(lobby.geo.matchCards[1])
+  check('点「2 架」进入房间页并带上架数', function () {
+    assert.strictEqual(app.scene.name, 'room')
+    assert.strictEqual(app.scene.mode, 'random')
+    assert.strictEqual(app.scene.matchPlanes, 2)
+  })
+  app.back()
+  await waitFor(function () { return app.scene.name === 'lobby' }, '回到大厅')
+
+  tapRect(app.scene.geo.createBtn)
+  check('点「创建房间」进入房间场景', function () { assert.strictEqual(app.scene.name, 'room') })
 
   const room = app.scene
   check('房间默认 create 模式', function () { assert.strictEqual(room.mode, 'create') })
   check('房间场景可渲染', function () { app.renderOnce() })
-  check('房间页不再出现「飞机数量」：架数改由布阵页决定', function () {
-    assert.ok(!room.geo.planeSlots, '房间页还留着数量选择器')
-    assert.strictEqual(room.planeCount, undefined, '房间页还存着 planeCount')
+  check('房间页有四行设置：房名 / 飞机数量 / 每步限时 / 是否私密', function () {
+    assert.ok(room.geo.nameY && room.geo.planeY && room.geo.stepY && room.geo.privY, '少了行位置')
+    assert.ok(room.geo.nameY < room.geo.planeY && room.geo.planeY < room.geo.stepY
+      && room.geo.stepY < room.geo.privY, '行顺序不对')
   })
-  check('卡片明显矮了（那一排棋子已经不占位），但仍留了一行说明架数去哪了', function () {
+  check('飞机数量是三段控件，默认 3 架', function () {
+    assert.strictEqual(room.geo.planeRects.length, 3)
+    assert.strictEqual(room.planeCount, MAX_PLANES)
+    const r = room.geo.planeRects[2]
+    assert.ok(r.x >= 0 && r.x + r.w <= 375, '第三段出屏')
+  })
+  check('每步限时是滑块，不是 ± 按钮', function () {
+    assert.ok(room.geo.stepSlider, '没有滑块')
+    assert.strictEqual(room.geo.stepMinus, undefined, '还留着减号按钮')
+    const s = room.geo.stepSlider
+    assert.ok(s.x >= 0 && s.x + s.w <= 375, '滑块出屏')
+    assert.ok(s.y > room.geo.stepY, '滑块压到标题行')
+  })
+  check('卡片把四行都包进去，说明文字不滑出卡片底', function () {
     const card = room.geo.card
-    assert.ok(card.h <= 240, '卡片没随着删掉棋子变矮：' + card.h)
-    assert.ok(room.geo.hintY > card.y && room.geo.hintY < card.y + card.h,
-      '说明文字没落在卡片里')
+    assert.ok(card.h > app.u(500), '卡片太矮，四行放不下：' + card.h)
+    assert.ok(room.geo.hintY > card.y && room.geo.hintY < card.y + card.h, '说明文字没落在卡片里')
+    assert.ok(room.geo.stepSlider.y + room.geo.stepSlider.h < card.y + card.h, '滑块滑出卡片底')
   })
-  check('本局上限仍是 3 架', function () {
-    assert.strictEqual(MAX_PLANES, 3)
+
+  /* ---- 架数分段：点一下即改 ---- */
+  tapRect(room.geo.planeRects[0])
+  check('点「1 架」后本局架数变 1', function () {
+    assert.strictEqual(room.planeCount, 1)
+  })
+  tapRect(room.geo.planeRects[2])
+  check('点回「3 架」', function () { assert.strictEqual(room.planeCount, 3) })
+
+  /* ---- 滑块：拖动即改，1 秒连续 ---- */
+  const slider = room.geo.stepSlider
+  const sCy = slider.y + slider.h / 2
+  const sLeft = slider.x + app.u(24) + 1
+  const sRight = slider.x + slider.w - app.u(24) - 1
+  app.touchStart(sRight, sCy)
+  app.touchEnd(sRight, sCy)
+  check('拖到最右 = 30 秒', function () { assert.strictEqual(room.stepSeconds, TURN_MAX) })
+
+  app.touchStart(sLeft, sCy)
+  app.touchEnd(sLeft, sCy)
+  check('拖到最左 = 5 秒（下限）', function () { assert.strictEqual(room.stepSeconds, TURN_MIN) })
+
+  app.touchStart(sLeft, sCy)
+  app.touchMove(sLeft + (sRight - sLeft) * 0.5, sCy)
+  app.touchEnd(sRight, sCy)
+  check('拖动中途连续改值（1 秒粒度，不是 5 秒跳档）', function () {
+    const v = room.stepSeconds
+    assert.ok(v >= TURN_MIN && v <= TURN_MAX, '越界：' + v)
+  })
+
+  app.touchStart(sRight, sCy)
+  app.touchEnd(sRight, sCy)
+  check('每步限时仍是整数（滑块算出浮点也不会存进去）', function () {
+    assert.strictEqual(room.stepSeconds, Math.round(room.stepSeconds))
   })
   app.renderOnce()
 
   /* ---------- 4. 创建房间 → 等待 → 对手就位 ---------- */
   section('[4] 创建房间 → 对手加入 → 布阵')
+
+  // 「快速匹配」也要端到端对上架数：点「3 架」→ 房间就是 3 架 → 布阵页 3 个名额
+  app.reset('lobby')
+  tapRect(app.scene.geo.matchCards[2])
+  await waitFor(function () { return app.scene.name === 'deploy' }, '匹配到房间并进入布阵')
+  check('快速匹配 3 架 → 房间与布阵名额都是 3', function () {
+    assert.strictEqual(app.globalData.match.planeCount, 3)
+    assert.strictEqual(app.scene.slotCount, 3)
+    assert.strictEqual(app.scene.placed.length, 3)
+  })
+  check('布阵页按 3 架自动摆满，且位置合规', function () {
+    assert.strictEqual(app.scene.activeCount(), 3)
+    assert.strictEqual(app.scene.audit().ok, true)
+  })
+  app.scene.stopCountdown()
+  app.reset('lobby')
+  await sleep(60)
+  // 上面那次走的是 random 模式，房间场景被复用成 random 布局了 —— 重新进一次创建页
+  app.go('room', { mode: 'create' })
+
+  // 本段走「1 架局」：后面的对战断言依赖「一炮定胜负」。
+  // 布阵细节里有需要 3 架的（重叠 / 身份色 / 上限），用夹具切过去，不靠房间。
+  tapRect(room.geo.planeRects[0])
+  check('创建前把架数定为 1（对战段依赖一炮定胜负）', function () {
+    assert.strictEqual(room.planeCount, 1)
+  })
 
   const actionZone = room.zones[room.zones.length - 1]
   tapRect(actionZone)
@@ -276,17 +374,33 @@ async function main() {
   check('对手加入后自动进入布阵', function () { assert.strictEqual(app.scene.name, 'deploy') })
 
   const deploy = app.scene
-  check('布阵页恒有三个名额（本局上限 3 架，不再由房间决定）', function () {
-    assert.strictEqual(deploy.placed.length, MAX_PLANES, '名额数 ' + deploy.placed.length)
-    assert.strictEqual(deploy.geo.statusSlots.length, MAX_PLANES, '状态条槽位数不对')
+  check('布阵页名额数 = 房间定的架数（1 架）', function () {
+    assert.strictEqual(deploy.slotCount, 1, 'slotCount ' + deploy.slotCount)
+    assert.strictEqual(deploy.placed.length, 1, '名额数 ' + deploy.placed.length)
+    assert.strictEqual(deploy.geo.statusSlots.length, 1, '状态条槽位数不对')
   })
-  check('初始三个名额都是「未加入」，棋盘上一架也没有', function () {
-    assert.strictEqual(deploy.activeCount(), 0)
-    assert.strictEqual(deploy.noneCount(), MAX_PLANES)
-    const flat = deploy.cells().reduce(function (a, r) { return a.concat(r) }, [])
-    assert.ok(!flat.some(function (v) { return v && (v.s === 'plane' || v.s === 'head') }),
-      '棋盘上竟然画了飞机')
+  check('进布阵页就按架数摆好，不用玩家一架架点「+」', function () {
+    assert.strictEqual(deploy.activeCount(), 1)
+    assert.strictEqual(deploy.audit().ok, true, '自动摆的位置竟然不合规')
   })
+
+  // 夹具：把这一页切成 3 架局（房间是 1 架，但布阵细节要测 3 架才能覆盖重叠与配色）
+  const mkSlot = function (slot) {
+    return {
+      slot: slot, planeId: 'standard', state: 'none',
+      anchorRow: 0, anchorCol: 0, rotation: 0, cells: []
+    }
+  }
+  const useSlots = function (n) {
+    deploy.slotCount = n
+    deploy.placed = []
+    for (let i = 0; i < n; i++) deploy.placed.push(mkSlot(i))
+    deploy.selected = -1
+    deploy.drag = null
+    deploy._press = null
+    deploy.layout()
+  }
+  useSlots(3)
 
   // 极端夹具用：直接造一架在场的飞机（state 必须是 out 才算在场上）
   const mkOut = function (row, col, rot, slot) {
@@ -296,6 +410,12 @@ async function main() {
       cells: getAbsoluteCells('standard', row, col, rot)
     }
   }
+
+  check('切到 3 架局后状态条跟着变成 3 个槽', function () {
+    assert.strictEqual(deploy.geo.statusSlots.length, 3)
+    const last = deploy.geo.statusSlots[2]
+    assert.ok(last.x + last.w < deploy.geo.statusTextX, '棋子压到状态文字')
+  })
 
   const board = deploy.geo.board
   check('棋盘完整落在屏内', function () {
@@ -607,8 +727,8 @@ async function main() {
     assert.strictEqual(p.rotation, stashedPos.rot, '回来的朝向变了')
     assert.strictEqual(deploy.selected, 0, '展开后没有顺手选中它')
   })
-  // 合并数量之后，收起就等于「这一局不用这架」——
-  // 所以收起**不该**再拦着就绪，否则玩家没法只打 1 架。
+  // 架数由房主开房时定死，布阵必须**正好摆满**。
+  // 收起不再等于「这一局不用这架」—— 它只是「暂时挪开」，凑不够就开不了局。
   // 注意：这里不能真的提交 —— 离线引擎会在几百毫秒后把场景切到 battle，
   // 后面所有用例都会在一个已经被换掉的场景上跑。用 spy 顶掉 submit。
   const spySubmit = function (fn) {
@@ -619,8 +739,8 @@ async function main() {
     return called
   }
 
-  check('收起 1 架、场上还剩 1 架 → 就绪不再被拦（架数由玩家自己定）', function () {
-    // 用「+」自动落位，保证位置本身合规，才能证明拦住它的只可能是「收起」
+  check('3 架局收起 1 架 → 就绪被拦（数量不符，不许开局）', function () {
+    // 用「+」自动落位，保证位置本身合规，才能证明拦住它的只能是数量
     deploy.onClear()
     deploy.onPickSlot(0)
     deploy.onPickSlot(1)
@@ -632,19 +752,53 @@ async function main() {
     MODAL.last = null
     const before = MODAL.count
     const called = spySubmit(function () { deploy.onReady() })
-    assert.strictEqual(MODAL.count, before, '竟然弹窗拦住了：' + (MODAL.last && MODAL.last.title))
-    assert.ok(called, '收起 1 架就没法开局了')
-    assert.strictEqual(deploy.readying, false, 'spy 没接到：真的提交了')
+    assert.strictEqual(MODAL.count, before + 1, '数量不对却没弹窗')
+    assert.strictEqual(MODAL.last.title, '还差 2 架', '弹窗标题：' + MODAL.last.title)
+    assert.ok(!called, '数量不对竟然提交了')
+    assert.ok(/必须正好摆 3 架/.test(MODAL.last.content), '没说清规则：' + MODAL.last.content)
   })
-  check('一架都不放时，就绪不提交也不弹窗（只是还没开始摆）', function () {
-    deploy.onClear()
+  check('拦截弹窗给一步到位的修法（补齐 / 我自己改）', function () {
+    assert.strictEqual(MODAL.last.confirmText, '替我补齐')
+    assert.strictEqual(MODAL.last.cancelText, '我自己改')
+  })
+  check('点「替我补齐」→ 补齐到本局架数且位置合规', function () {
+    MODAL.last.success({ confirm: true })
+    assert.strictEqual(deploy.activeCount(), 3, '没补齐：' + deploy.activeCount())
+    assert.strictEqual(deploy.audit().ok, true, '补齐后位置不合规')
+    assert.strictEqual(deploy.offCount(), 0, '收起的没放回来')
+  })
+  check('补齐后数量对上了，就绪放行', function () {
     MODAL.last = null
     const before = MODAL.count
     const called = spySubmit(function () { deploy.onReady() })
-    assert.strictEqual(MODAL.count, before, '0 架时弹了弹窗')
+    assert.strictEqual(MODAL.count, before, '数量已对上还在拦：' + (MODAL.last && MODAL.last.title))
+    assert.ok(called, '没放行')
+  })
+  check('一架都不放时，就绪被拦且说的是「还差 3 架」', function () {
+    deploy.onClear()
+    MODAL.last = null
+    const called = spySubmit(function () { deploy.onReady() })
+    assert.strictEqual(MODAL.last.title, '还差 3 架', '实际：' + (MODAL.last && MODAL.last.title))
     assert.ok(!called, '0 架竟然提交了')
     deploy.placed[0] = mkOut(5, 5, 0, 0)
     deploy.layout()
+  })
+  check('摆多了也能被拦，修法是「收起多的」', function () {
+    // 3 架局摆 1 架会「还差 2 架」；这里反过来造一个 1 架局摆 3 架的局面
+    deploy.slotCount = 1
+    deploy.placed = [mkOut(1, 1, 0, 0), mkOut(4, 4, 0, 1), mkOut(7, 7, 0, 2)]
+    deploy.layout()
+    MODAL.last = null
+    const called = spySubmit(function () { deploy.onReady() })
+    assert.ok(!called, '摆多了竟然提交了')
+    assert.strictEqual(MODAL.last.title, '多了 2 架', '实际：' + MODAL.last.title)
+    assert.strictEqual(MODAL.last.confirmText, '收起多的')
+    MODAL.last.success({ confirm: true })
+    assert.strictEqual(deploy.activeCount(), 1, '没把多的收起来')
+    assert.strictEqual(deploy.offCount(), 2, '收起的不该直接删掉')
+    // 恢复 3 架局给后面的用例
+    useSlots(3)
+    deploy.onClear()
   })
 
   // 极端情况：三架完全重合。真实操作里「连续拖到同一处」就能达成，不能崩
@@ -707,6 +861,8 @@ async function main() {
   })
 
   // ⑫ 就绪校验：还有不合规的飞机 → 拦住，并说清是哪一架
+  // 先切成 2 架局，这样「数量」正好对上，被拦只可能因为位置
+  useSlots(2)
   tapRect(deploy.geo.opRects[2])          // 清空
   deploy.rotation = 0
   tapRect(Board.cellRect(board, 5, 5))    // A 占 行 5~8
@@ -746,19 +902,19 @@ async function main() {
     })
   })
 
-  // ⑭ 清空 / 随机布阵
+  // ⑭ 清空 / 随机布阵（切回 3 架局）
+  useSlots(3)
   tapRect(deploy.geo.opRects[2])
-  check('「清空」生效：三个名额都回到「未加入」', function () {
+  check('「清空」生效：名额都回到「未加入」', function () {
     assert.strictEqual(deploy.activeCount(), 0)
-    assert.strictEqual(deploy.noneCount(), MAX_PLANES)
+    assert.strictEqual(deploy.noneCount(), deploy.slotCount)
     assert.strictEqual(deploy.offCount(), 0, '清空应该连收起的位置一起清掉')
   })
 
-  // ⑮ 随机布阵：只重排当前在场上那几架，不偷偷改架数；
-  //     一架都没有时才补满（否则点了一下什么也没发生，玩家会以为按钮坏了）
-  check('一架都没有时，随机布阵补满 3 架', function () {
+  // ⑮ 随机布阵：总是摆满「本局架数」。架数不是它能改的东西 —— 房间上写着。
+  check('随机布阵摆满本局架数（3 架）', function () {
     tapRect(deploy.geo.opRects[1])
-    assert.strictEqual(deploy.activeCount(), MAX_PLANES, '实际 ' + deploy.activeCount())
+    assert.strictEqual(deploy.activeCount(), deploy.slotCount, '实际 ' + deploy.activeCount())
     const a = deploy.audit()
     assert.strictEqual(a.ok, true, '随机布阵产生了违规：' + JSON.stringify(a.items))
   })
@@ -767,12 +923,12 @@ async function main() {
     assert.ok(flat.some(function (v) { return v && v.p === 0 && v.s === 'head' }), '没有 p=0 的机头')
     assert.ok(flat.some(function (v) { return v && v.p === 2 && v.s === 'head' }), '没有 p=2 的机头')
   })
-  check('已有 1 架时，随机布阵只重排这 1 架（架数不被偷偷改掉）', function () {
+  check('场上只有 1 架时随机布阵仍然摆满（不会被现有数量带偏）', function () {
     deploy.onClear()
     tapRect(Board.cellRect(board, 5, 5))
     assert.strictEqual(deploy.activeCount(), 1)
     tapRect(deploy.geo.opRects[1])
-    assert.strictEqual(deploy.activeCount(), 1, '架数被改成了 ' + deploy.activeCount())
+    assert.strictEqual(deploy.activeCount(), deploy.slotCount, '实际 ' + deploy.activeCount())
     assert.strictEqual(deploy.audit().ok, true, '重排后不合规')
   })
 
@@ -796,20 +952,27 @@ async function main() {
     assert.strictEqual(deploy.activeCount(), 2)
     assert.strictEqual(deploy.audit().ok, true, '两架自动落点重叠了')
   })
-  check('点「+」添到上限后再点第 4 个位置——没有第 4 个（上限 3 架）', function () {
+  check('点「+」添到上限后再点第 4 个位置——没有第 4 个（本局 3 架）', function () {
     tapRect(deploy.geo.statusSlots[2])
-    assert.strictEqual(deploy.activeCount(), MAX_PLANES)
+    assert.strictEqual(deploy.activeCount(), deploy.slotCount)
     assert.strictEqual(deploy.noneCount(), 0)
     assert.strictEqual(deploy.audit().ok, true, '三架自动落点互相压到了')
   })
 
-  // 战斗段落依赖「1 架、一炮定胜负」：清空后只放 1 架，验证「只打 1 架」这条新规则
-  deploy.onClear()
+  // 战斗段落依赖「1 架、一炮定胜负」：切回 1 架局（房间本来就是 1 架）
+  deploy.slotCount = 1
+  deploy.placed = [mkSlot(0)]
+  deploy.selected = -1
+  deploy.drag = null
   deploy.rotation = 0
+  deploy.layout()
   tapRect(Board.cellRect(board, 5, 5))
-  check('只放 1 架也能就绪（旧版必须放满 N 架）', function () {
+  check('1 架局摆 1 架 → 就绪按钮报「就绪 · 1 架」且放行', function () {
     assert.strictEqual(deploy.activeCount(), 1)
     assert.strictEqual(deploy.audit().ok, true)
+    MODAL.last = null
+    const called = spySubmit(function () { deploy.onReady() })
+    assert.ok(called, '1 架局摆 1 架竟然没放行')
   })
 
   // 就绪
@@ -1137,10 +1300,10 @@ async function main() {
 
   app.go('room', { mode: 'create' })
   const cr = app.scene
-  check('创建页三行设置都在卡片内，且卡片不压住底部按钮', function () {
+  check('创建页四行设置都在卡片内，且卡片不压住底部按钮', function () {
     const card = cr.geo.card
     assert.ok(card.h > 0, '没有卡片')
-    ;[cr.geo.nameY, cr.geo.stepY, cr.geo.privY, cr.geo.hintY].forEach(function (y) {
+    ;[cr.geo.nameY, cr.geo.planeY, cr.geo.stepY, cr.geo.privY, cr.geo.hintY].forEach(function (y) {
       assert.ok(y > card.y && y < card.y + card.h, '有一行跑出卡片：' + y)
     })
     assert.ok(card.y + card.h < 667 - 80, '卡片压到底部操作区')
@@ -1152,22 +1315,37 @@ async function main() {
     assert.ok(cr.roomName && cr.roomName.length > 0, '房间名为空')
     assert.ok(cr.roomName.length <= 12, '房间名过长：' + cr.roomName)
   })
-  check('每步限时默认 30 秒（范围内）', function () {
-    assert.strictEqual(cr.stepSeconds, 30)
+  check('每步限时默认 20 秒（范围内）', function () {
+    assert.strictEqual(cr.stepSeconds, TURN_DEFAULT)
+    assert.ok(cr.stepSeconds >= TURN_MIN && cr.stepSeconds <= TURN_MAX)
   })
-  check('步进器把限时夹在 5~30 秒之间', function () {
-    for (let i = 0; i < 10; i++) tapRect(cr.geo.stepPlus)
-    assert.strictEqual(cr.stepSeconds, 30, '上限失效：' + cr.stepSeconds)
-    for (let i = 0; i < 12; i++) tapRect(cr.geo.stepMinus)
-    assert.strictEqual(cr.stepSeconds, 5, '下限失效：' + cr.stepSeconds)
-    tapRect(cr.geo.stepPlus)
-    assert.strictEqual(cr.stepSeconds, 10, '步长应为 5 秒')
+  check('滑块把限时夹在 5~30 秒之间（拖到两端越界也不飘）', function () {
+    const r = cr.geo.stepSlider
+    const cy = r.y + r.h / 2
+    app.touchStart(r.x + 2, cy)
+    app.touchEnd(r.x + 2, cy)
+    assert.strictEqual(cr.stepSeconds, TURN_MIN, '左端失效：' + cr.stepSeconds)
+    app.touchStart(r.x + r.w - 2, cy)
+    app.touchEnd(r.x + r.w - 2, cy)
+    assert.strictEqual(cr.stepSeconds, TURN_MAX, '右端失效：' + cr.stepSeconds)
   })
-  check('步进器两个按钮都在卡片内且不重叠', function () {
-    const a = cr.geo.stepMinus
-    const b = cr.geo.stepPlus
-    assert.ok(a.x + a.w < b.x, '两个按钮重叠了')
-    assert.ok(a.x >= cr.geo.card.x && b.x + b.w <= cr.geo.card.x + cr.geo.card.w, '按钮出卡片')
+  check('滑块 1 秒连续：拖到中间能取到 5 与 30 之间的任意整数', function () {
+    const r = cr.geo.stepSlider
+    const cy = r.y + r.h / 2
+    const left = r.x + app.u(24)
+    const right = r.x + r.w - app.u(24)
+    // 走到 1/4、1/2、3/4，三个点都应该落在开区间里，且互不相同
+    const got = []
+    ;[0.25, 0.5, 0.75].forEach(function (t) {
+      app.touchStart(left + (right - left) * t, cy)
+      app.touchEnd(left + (right - left) * t, cy)
+      got.push(cr.stepSeconds)
+    })
+    got.forEach(function (v) {
+      assert.ok(v > TURN_MIN && v < TURN_MAX, '没落在开区间：' + v)
+      assert.strictEqual(v, Math.round(v), '不是整数：' + v)
+    })
+    assert.strictEqual(new Set(got).size, 3, '三个位置取到同一个值：' + got.join(','))
   })
   check('打开私密开关后出现密码行，且整卡仍在屏内', function () {
     tapRect({ x: cr.geo.switch.x, y: cr.geo.switch.y, w: cr.geo.switch.w, h: cr.geo.switch.h })
@@ -1190,11 +1368,12 @@ async function main() {
   const rl = app.scene
   await waitFor(function () { return rl.all.length > 0 }, '公开房间列表加载')
 
-  check('公开列表至少一条，且每条都有房间号 / 房名 / 单步限时', function () {
+  check('公开列表至少一条，且每条都有房间号 / 房名 / 架数 / 单步限时', function () {
     assert.ok(rl.all.length > 0)
     rl.all.forEach(function (it) {
       assert.ok(/^\d{6}$/.test(it.roomNo), '房间号不合法：' + it.roomNo)
       assert.ok(it.roomName && it.roomName.length > 0, '缺少房名')
+      assert.ok(it.planeCount >= 1 && it.planeCount <= 3, '架数不合法：' + it.planeCount)
       assert.ok(it.stepSeconds >= 5 && it.stepSeconds <= 30, '单步限时不合法：' + it.stepSeconds)
     })
   })
@@ -1276,7 +1455,7 @@ async function main() {
   // 这一段直接驱动离线引擎：AI 出手延时调大，避免它在断言之间插一脚
   offline.setDelays({ opponentJoin: 20, matchJoin: 20, ready: 20, foeAction: 60000 })
   offline._reset()
-  await offline.createRoom({ planeCount: 3, stepSeconds: 5 })
+  await offline.createRoom({ planeCount: 1, stepSeconds: 5 })
   const t0 = Date.now()
   await offline.deploy({
     planes: [{ planeId: 'standard', anchorRow: 5, anchorCol: 5, rotation: 0 }]
@@ -1321,7 +1500,7 @@ async function main() {
 
   // 重新开一局，专门测连超判负
   offline._reset()
-  await offline.createRoom({ planeCount: 3, stepSeconds: 5 })
+  await offline.createRoom({ planeCount: 1, stepSeconds: 5 })
   await offline.deploy({
     planes: [{ planeId: 'standard', anchorRow: 1, anchorCol: 1, rotation: 0 }]
   })
@@ -1357,10 +1536,22 @@ async function main() {
   check('单步限时夹在 5~30 秒，非法值回落默认', function () {
     assert.strictEqual(ROOMUTIL.clampStepSeconds(3), 5)
     assert.strictEqual(ROOMUTIL.clampStepSeconds(99), 30)
-    assert.strictEqual(ROOMUTIL.clampStepSeconds(17), 15)
+    // 1 秒连续：17 就是 17，不再对齐到 5 的倍数
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(17), 17)
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(17.6), 18)
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(5), 5)
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(30), 30)
     assert.strictEqual(ROOMUTIL.clampStepSeconds(''), RULES.TURN_DEFAULT)
     assert.strictEqual(ROOMUTIL.clampStepSeconds(undefined), RULES.TURN_DEFAULT)
     assert.strictEqual(ROOMUTIL.clampStepSeconds(NaN), RULES.TURN_DEFAULT)
+  })
+  check('本局架数夹在 1~3，取整', function () {
+    assert.strictEqual(ROOMUTIL.clampPlaneCount(0), 1)
+    assert.strictEqual(ROOMUTIL.clampPlaneCount(9), 3)
+    assert.strictEqual(ROOMUTIL.clampPlaneCount(2), 2)
+    assert.strictEqual(ROOMUTIL.clampPlaneCount('2'), 2)
+    assert.strictEqual(ROOMUTIL.clampPlaneCount(2.6), 3)
+    assert.strictEqual(ROOMUTIL.clampPlaneCount(undefined), 1)
   })
   check('房间名去空白、压空格、截断到 12 字', function () {
     assert.strictEqual(ROOMUTIL.normalizeRoomName('  老周 \n 中队  '), '老周 中队')

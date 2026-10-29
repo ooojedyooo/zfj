@@ -16,9 +16,9 @@ const GAMES = 'games'
 const { getAbsoluteCells, validatePlacement } = require('./shared/utils/plane')
 const { buildIndex, judge, isAllDestroyed } = require('./shared/utils/judge')
 const { key } = require('./shared/utils/board')
-const { pickAutoTarget } = require('./shared/utils/room')
+const { clampPlaneCount, pickAutoTarget } = require('./shared/utils/room')
 const {
-  RESULT, BOARD_SIZE, MIN_PLANES, MAX_PLANES,
+  RESULT, BOARD_SIZE,
   TIMEOUT, MAX_TURN_TIMEOUT_STREAK, END_TYPE
 } = require('./shared/config/rules')
 const { EMOTE_LIST } = require('./shared/config/social')
@@ -68,8 +68,15 @@ async function deploy(event, openid) {
   if (!isPlayer(room, openid)) return fail('你不在该房间中', 'NOT_PLAYER')
 
   const list = Array.isArray(event.planes) ? event.planes : []
-  if (list.length < MIN_PLANES || list.length > MAX_PLANES) {
-    return fail('飞机数量需在 ' + MIN_PLANES + '~' + MAX_PLANES + ' 架之间', 'BAD_COUNT')
+
+  // 架数由房主开房时定死 —— 双方必须摆同样多，否则「先击毁全部」这个胜负条件
+  // 就变成了「谁放得少谁占便宜」。多一架少一架都不收。
+  const need = clampPlaneCount(room.planeCount)
+  if (list.length !== need) {
+    return fail(
+      '本局固定 ' + need + ' 架，你提交了 ' + list.length + ' 架',
+      'PLANE_COUNT_MISMATCH'
+    )
   }
 
   // 服务端重新校验一次：不信任客户端传来的格子

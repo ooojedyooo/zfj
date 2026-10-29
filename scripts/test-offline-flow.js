@@ -161,7 +161,14 @@ async function main() {
   try {
     await offline.deploy({ planes: [] })
   } catch (e) { badErr = e }
-  check('空布阵被拒绝（至少 1 架）', () => assert.ok(badErr && /至少/.test(badErr.message)))
+  check('空布阵被拒绝（本局固定 1 架）', () => assert.ok(badErr && /固定 1 架/.test(badErr.message)))
+
+  // 多摆一架也要拒：架数由房间定死，不是「1~3 架都行」
+  let overErr = null
+  try {
+    await offline.deploy({ planes: toSubmit(randomDeploy(3, 'standard', BOARD_SIZE)) })
+  } catch (e) { overErr = e }
+  check('多摆两架同样被拒绝', () => assert.ok(overErr && /固定 1 架/.test(overErr.message)))
 
   const myPlanes = randomDeploy(1, 'standard', BOARD_SIZE)
   const dep = await offline.deploy({ planes: toSubmit(myPlanes) })

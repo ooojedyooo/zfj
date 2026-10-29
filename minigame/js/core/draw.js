@@ -43,6 +43,15 @@ function circle(ctx, cx, cy, radius, color) {
   ctx.fill()
 }
 
+/** 描边圆 */
+function strokeCircle(ctx, cx, cy, radius, color, width) {
+  ctx.strokeStyle = color
+  ctx.lineWidth = width || 1
+  ctx.beginPath()
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+  ctx.stroke()
+}
+
 /** 直线 */
 function line(ctx, x1, y1, x2, y2, color, width) {
   ctx.strokeStyle = color
@@ -119,5 +128,6 @@ function background(ctx, layout) {
 }
 
 module.exports = {
-  roundRectPath, fillRect, strokeRect, circle, line, dashedLine, text, measure, ellipsis, background
+  roundRectPath, fillRect, strokeRect, circle, strokeCircle,
+  line, dashedLine, text, measure, ellipsis, background
 }

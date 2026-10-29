@@ -7,8 +7,8 @@
 // 注意：本模块是纯逻辑实现，不依赖任何小程序 API，可用 Node 直接测试。
 const { LocalGame, genRoomId } = require('./localGame')
 const { getAbsoluteCells } = require('../utils/plane')
-const { MIN_PLANES, MAX_PLANES, TIMEOUT, MAX_TURN_TIMEOUT_STREAK } = require('../config/rules')
-const { clampStepSeconds, normalizeRoomName } = require('../utils/room')
+const { TIMEOUT, MAX_TURN_TIMEOUT_STREAK } = require('../config/rules')
+const { clampPlaneCount, clampStepSeconds, normalizeRoomName } = require('../utils/room')
 const { EMOTE_LIST } = require('../config/social')
 
 const ME = 'me'
@@ -19,12 +19,12 @@ const FOE = 'foe'
 // 必须有内容可看，否则整页空白，玩家会以为功能坏了。
 // 私密房示例密码统一 8888 —— 页面底部会写出来，不然离线时没人知道该输什么。
 const MOCK_ROOMS = [
-  { roomNo: '204815', roomName: '老周的飞行中队', stepSeconds: 20, hasPassword: false },
-  { roomNo: '611902', roomName: '十秒一炮', stepSeconds: 10, hasPassword: false },
-  { roomNo: '338470', roomName: '慢慢想，不着急', stepSeconds: 30, hasPassword: false },
-  { roomNo: '750284', roomName: '一盘定生死', stepSeconds: 5, hasPassword: false },
-  { roomNo: '918263', roomName: '老周的秘密基地', stepSeconds: 15, hasPassword: true },
-  { roomNo: '462097', roomName: '夜战小队', stepSeconds: 15, hasPassword: true }
+  { roomNo: '204815', roomName: '老周的飞行中队', planeCount: 3, stepSeconds: 20, hasPassword: false },
+  { roomNo: '611902', roomName: '十秒一炮', planeCount: 1, stepSeconds: 10, hasPassword: false },
+  { roomNo: '338470', roomName: '慢慢想，不着急', planeCount: 2, stepSeconds: 30, hasPassword: false },
+  { roomNo: '750284', roomName: '一盘定生死', planeCount: 3, stepSeconds: 5, hasPassword: false },
+  { roomNo: '918263', roomName: '老周的秘密基地', planeCount: 2, stepSeconds: 15, hasPassword: true },
+  { roomNo: '462097', roomName: '夜战小队', planeCount: 3, stepSeconds: 15, hasPassword: true }
 ]
 const MOCK_PASSWORD = '8888'
 
@@ -52,8 +52,7 @@ function setDelays(next) {
 }
 
 function clampPlanes(n) {
-  const v = Number(n) || MIN_PLANES
-  return Math.min(MAX_PLANES, Math.max(MIN_PLANES, v))
+  return clampPlaneCount(n)
 }
 
 function reset() {
@@ -217,7 +216,7 @@ async function joinRoom(params) {
     _id: 'local-' + Date.now(),
     roomNo,
     roomName: meta.roomName || '好友的房间',
-    planeCount: clampPlanes(p.planeCount),
+    planeCount: clampPlanes(meta.planeCount || p.planeCount),
     stepSeconds: clampStepSeconds(meta.stepSeconds || p.stepSeconds),
     hasPassword,
     status: 'deploy',          // 房主已在，我加入后即两人齐
@@ -281,17 +280,19 @@ async function deploy(params) {
   if (!room) throw new Error('房间不存在')
 
   const raw = (params && params.planes) || []
-  if (raw.length < MIN_PLANES) throw new Error('至少布置 1 架飞机')
+  // 与云端同一条规则：架数由房间定死，多一架少一架都不收
+  const need = clampPlanes(room.planeCount)
+  if (raw.length !== need) {
+    throw new Error('本局固定 ' + need + ' 架，你提交了 ' + raw.length + ' 架')
+  }
 
   // 与云端一致：补全 cells
   const planes = raw.map(p => Object.assign({}, p, {
     cells: getAbsoluteCells(p.planeId || 'standard', p.anchorRow, p.anchorCol, p.rotation || 0)
   }))
 
-  // AI 用**和我一样的架数**布阵：本地试玩要模拟一场公平对局。
-  // 架数已改由布阵页决定（点「+」添几架就打几架），房间上的 planeCount
-  // 只是「本局上限」，不能再拿它当实际架数用。
-  game = new LocalGame({ planeCount: planes.length })
+  // AI 用同一个架数布阵：本局架数写在房间上，双方必须一致
+  game = new LocalGame({ planeCount: need })
   game.deploy(planes)
   game.deployFoe()
   game.seq = 0

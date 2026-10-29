@@ -14,7 +14,7 @@ const Button = require('../widgets/button')
 const ui = require('../widgets/ui')
 const dialog = require('../core/dialog')
 const api = require('../shared/services/cloudApi')
-const { MAX_PLANES, TURN_DEFAULT } = require('../shared/config/rules')
+const { TURN_DEFAULT } = require('../shared/config/rules')
 
 const MAX_ITEMS = 6          // 一屏能看清的房间数，超过就提示用搜索
 const ITEM_H = 116
@@ -137,9 +137,11 @@ class Rooms extends Scene {
       g.actionRects = Button.rowRects(x, by, w, btnH, u(20), 1)
       this.zone(x, by, w, btnH, this.onEnterRoomNo.bind(this))
     } else {
-      g.actionRects = Button.rowRects(x, by, w, btnH, u(20), 2)
-      this.zone(g.actionRects[0].x, by, g.actionRects[0].w, btnH, this.onMatch.bind(this))
-      this.zone(g.actionRects[1].x, by, g.actionRects[1].w, btnH, this.onEnterRoomNo.bind(this))
+      // 底部只留一个动作：「输房间号加入」。
+      // 「一键匹配」撤掉了 —— 大厅已经按 1 / 2 / 3 架分了三张卡，
+      // 这里再来个不分架数的匹配，玩家点下去之前根本不知道会进几架的局。
+      g.actionRects = Button.rowRects(x, by, w, btnH, u(20), 1)
+      this.zone(x, by, w, btnH, this.onEnterRoomNo.bind(this))
     }
   }
 
@@ -183,13 +185,10 @@ class Rooms extends Scene {
       this.drawEmpty(ctx)
     }
 
-    // 底部按钮
-    if (this.mode === 'search') {
-      Button.render(ctx, Object.assign({}, g.actionRects[0], { label: '输入房间号加入', kind: 'outline' }))
-    } else {
-      Button.render(ctx, Object.assign({}, g.actionRects[0], { label: '一键匹配', kind: 'primary' }))
-      Button.render(ctx, Object.assign({}, g.actionRects[1], { label: '输房间号', kind: 'outline' }))
-    }
+    // 底部按钮（公开列表与搜索页一致：都是「我知道房号，直接输」）
+    Button.render(ctx, Object.assign({}, g.actionRects[0], {
+      label: '输入房间号加入', kind: 'outline'
+    }))
 
     if (!api.isCloud) {
       draw.text(ctx, '离线试玩 · 列表为演示数据，私密房示例密码 8888',
@@ -211,8 +210,9 @@ class Rooms extends Scene {
         size: u(theme.size.h3), weight: 500, color: c.text
       })
 
-    // 房间号 + 单步限时（决定要不要进的关键信息）
-    draw.text(ctx, '#' + it.roomNo + '  ·  每步 ' + (it.stepSeconds || TURN_DEFAULT) + ' 秒',
+    // 房间号 + 架数 + 单步限时（决定「要不要进这局」的三项关键信息）
+    draw.text(ctx,
+      '#' + it.roomNo + '  ·  ' + (it.planeCount || 3) + ' 架  ·  每步 ' + (it.stepSeconds || TURN_DEFAULT) + ' 秒',
       rect.x + u(28), rect.y + u(82), {
         size: u(theme.size.small), color: c.textMuted
       })
@@ -296,23 +296,6 @@ class Rooms extends Scene {
       app.hideBusy()
       self.joining = ''
       app.toast((e && e.message) || '加入失败')
-    })
-  }
-
-  onMatch() {
-    const self = this
-    const app = this.app
-    if (this.joining) return
-    this.joining = 'match'
-    app.busy('匹配中…')
-    api.matchRoom({ planeCount: MAX_PLANES }).then(function (data) {
-      app.hideBusy()
-      self.joining = ''
-      app.replace('room', { joined: data })
-    }).catch(function (e) {
-      app.hideBusy()
-      self.joining = ''
-      app.toast((e && e.message) || '匹配失败')
     })
   }
 

@@ -74,16 +74,28 @@ DEVICES.forEach(function (d) {
   const W = d.w
   const H = d.h
 
-  // --- 大厅 ---
+  // --- 大厅：三张匹配卡 + 三个入口 ---
   const lobby = app.get('lobby')
   app.go('lobby')
   lobby.layout()
-  lobby.geo.buttons.forEach(function (b, i) { inside(b, W, H, '大厅按钮' + (i + 1), errs) })
-  lobby.geo.buttons.forEach(function (b, i) {
-    if (i > 0) overlap(lobby.geo.buttons[i - 1], b, '大厅按钮' + i, '大厅按钮' + (i + 1), errs)
+  lobby.geo.matchCards.forEach(function (b, i) { inside(b, W, H, '匹配卡' + (i + 1), errs) })
+  lobby.geo.matchCards.forEach(function (b, i) {
+    if (i > 0) overlap(lobby.geo.matchCards[i - 1], b, '匹配卡' + i, '匹配卡' + (i + 1), errs)
   })
+  const entries = [
+    ['创建房间', lobby.geo.createBtn],
+    ['浏览公开房间', lobby.geo.browseBtn],
+    ['搜索房间名', lobby.geo.searchBtn]
+  ]
+  entries.forEach(function (e) { inside(e[1], W, H, e[0], errs) })
+  overlap(lobby.geo.createBtn, lobby.geo.browseBtn, '创建按钮', '浏览按钮', errs)
+  overlap(lobby.geo.browseBtn, lobby.geo.searchBtn, '浏览按钮', '搜索按钮', errs)
+  // 匹配卡不能压到下面的入口按钮
+  overlap(lobby.geo.matchCards[0], lobby.geo.createBtn, '匹配卡', '创建按钮', errs)
+  // 规则链接与底部玩家标识也不能被挤出去
+  if (lobby.geo.rulesY > H) errs.push('规则链接出屏 ' + Math.round(lobby.geo.rulesY))
 
-  // --- 房间（create：房名 / 单步限时 / 私密开关 / 密码行）---
+  // --- 房间（create：房名 / 架数 / 单步限时滑块 / 私密开关 / 密码行）---
   const room = app.get('room')
   app.go('room', { mode: 'create' })
   room.usePassword = true
@@ -92,12 +104,15 @@ DEVICES.forEach(function (d) {
   inside(room.geo.actionBtn, W, H, '创建按钮', errs)
   overlap(room.geo.card, room.geo.actionBtn, '房间卡片', '创建按钮', errs)
   inside(room.geo.switch, W, H, '私密开关', errs)
-  inside(room.geo.stepMinus, W, H, '限时−', errs)
-  inside(room.geo.stepPlus, W, H, '限时＋', errs)
-  overlap(room.geo.stepMinus, room.geo.stepPlus, '限时−', '限时＋', errs)
-  // 三行设置 + 密码行 + 说明行都必须落在卡片里
-  ;[['房名', room.geo.nameY], ['单步限时', room.geo.stepY], ['私密', room.geo.privY],
-    ['密码', room.geo.pwdY], ['说明', room.geo.hintY]].forEach(function (p) {
+  inside(room.geo.stepSlider, W, H, '限时滑块', errs)
+  room.geo.planeRects.forEach(function (r, i) {
+    inside(r, W, H, '架数段' + (i + 1), errs)
+    if (i > 0) overlap(room.geo.planeRects[i - 1], r, '架数段' + i, '架数段' + (i + 1), errs)
+  })
+  overlap(room.geo.stepSlider, room.geo.planeRects[1], '限时滑块', '架数段', errs)
+  // 四行设置 + 密码行 + 说明行都必须落在卡片里
+  ;[['房名', room.geo.nameY], ['飞机数量', room.geo.planeY], ['单步限时', room.geo.stepY],
+    ['私密', room.geo.privY], ['密码', room.geo.pwdY], ['说明', room.geo.hintY]].forEach(function (p) {
     if (p[1] == null) { errs.push(p[0] + ' 行不存在'); return }
     if (p[1] < room.geo.card.y || p[1] > room.geo.card.y + room.geo.card.h) {
       errs.push(p[0] + ' 行跑出卡片 ' + Math.round(p[1]))
@@ -113,7 +128,8 @@ DEVICES.forEach(function (d) {
   for (let i = 0; i < 6; i++) {
     fake.push({
       roomNo: '20481' + i, roomName: '房间示例' + i,
-      stepSeconds: 15, hasPassword: i % 2 === 0, players: 1
+      planeCount: (i % 3) + 1, stepSeconds: 15,
+      hasPassword: i % 2 === 0, players: 1
     })
   }
   rl.all = fake

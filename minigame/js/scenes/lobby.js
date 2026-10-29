@@ -167,7 +167,9 @@ class Lobby extends Scene {
     g.rulesY = y + gap(26) + extraBottom * 0.35
     this.zone(x, g.rulesY - gap(26), w, gap(52), this.onRules.bind(this))
 
-    g.footY = L.H - L.safeBottom - u(28)
+    // 「查看玩法规则」已经贴着底部了，标识行再往下挤就会被裁。
+    // 小屏（320×568）上 u(28) 只留 14px，字底正好压线，所以退到 u(40)。
+    g.footY = L.H - L.safeBottom - u(40)
   }
 
   render(ctx) {

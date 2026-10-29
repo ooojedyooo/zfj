@@ -162,9 +162,7 @@ class Rooms extends Scene {
 
     // 返回
     draw.fillRect(ctx, g.back.x, g.back.y, g.back.w, g.back.h, c.gray, u(theme.radius.pill))
-    draw.text(ctx, '‹ 返回', g.back.x + g.back.w / 2, g.back.y + g.back.h / 2, {
-      size: u(theme.size.small), color: c.text, align: 'center'
-    })
+    ui.backLabel(ctx, L, g.back, '返回')
 
     // 刷新
     draw.text(ctx, this.loading ? '刷新中…' : '刷新', g.refresh.x + g.refresh.w, g.refresh.y + g.refresh.h / 2, {
@@ -191,7 +189,7 @@ class Rooms extends Scene {
     // 底部按钮（公开列表与搜索页一致：都是「我知道房号，直接输」）
     Button.render(ctx, Object.assign({}, g.actionRects[0], {
       label: '输入房间号加入', kind: 'outline'
-    }))
+    }), u)
 
     if (!api.isCloud) {
       draw.text(ctx, '离线试玩 · 列表为演示数据，私密房示例密码 8888',

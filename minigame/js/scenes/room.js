@@ -289,9 +289,7 @@ class Room extends Scene {
 
     // 返回
     draw.fillRect(ctx, g.back.x, g.back.y, g.back.w, g.back.h, c.gray, u(theme.radius.pill))
-    draw.text(ctx, '‹ 返回', g.back.x + g.back.w / 2, g.back.y + g.back.h / 2, {
-      size: u(theme.size.small), color: c.text, align: 'center'
-    })
+    ui.backLabel(ctx, L, g.back, '返回')
 
     const card = g.card
     ui.card(ctx, L, card.x, card.y, card.w, card.h)

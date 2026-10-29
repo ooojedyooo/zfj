@@ -58,6 +58,27 @@ function modeTip(ctx, layout, x, y, w, text) {
   return h
 }
 
+/**
+ * 返回按钮的内容：手绘一个「‹」+ 文字，整组居中
+ * 不用「‹」这个码位——不同 Android 机型的回退字体对它的处理不一致，
+ * 有的渲染成小圆点、有的偏得离谱。两笔线画出来，任何设备上都长一样。
+ */
+function backLabel(ctx, layout, rect, text) {
+  const u = layout.u.bind(layout)
+  const cy = rect.y + rect.h / 2
+  const size = u(theme.size.small)
+  const textW = draw.measure(ctx, text, size)
+  const armW = u(7)
+  const armH = u(10)
+  const gapW = u(10)
+  const total = armW + gapW + textW
+  const x = rect.x + (rect.w - total) / 2
+  const lw = Math.max(1.5, u(2.4))
+  draw.line(ctx, x + armW, cy - armH, x, cy, theme.color.text, lw)
+  draw.line(ctx, x, cy, x + armW, cy + armH, theme.color.text, lw)
+  draw.text(ctx, text, x + armW + gapW, cy, { size: size, color: theme.color.text })
+}
+
 /** 圆形加载指示器（转圈） */
 function spinner(ctx, layout, cx, cy, r, phase) {
   ctx.strokeStyle = theme.color.primaryLight
@@ -85,4 +106,4 @@ function tag(ctx, layout, x, y, text, color, bg) {
   return { x: x, y: y, w: w, h: h }
 }
 
-module.exports = { titleBlock, card, row, sectionTitle, modeTip, spinner, tag }
+module.exports = { titleBlock, card, row, sectionTitle, modeTip, backLabel, spinner, tag }

@@ -277,6 +277,17 @@ class Battle extends Scene {
     g.mineBoard = this.boardRect(g.mineBlock, g.mineSize, padOuter, titleH)
     g.foeBoard = this.boardRect(g.foeBlock, g.foeSize, padOuter, titleH)
 
+    // 大棋盘是被「屏宽」卡住而不是被高度卡住的（竖屏上永远先撞 maxBoardW），
+    // 于是 remain 里会剩下一截用不掉的余量，全堆在小棋盘和底部按钮之间，
+    // 看着像半页空白。把余量对半分给「两棋盘之间」和「底部」，重心才落回中间。
+    const used = g.mineBlock.h + gap + g.foeBlock.h
+    const spare = Math.max(0, remain - used)
+    const gapExtra = Math.min(spare * 0.55, u(150))
+    if (gapExtra > 0) {
+      g.foeBlock.top = g.mineBlock.top + g.mineBlock.h + gap + gapExtra
+      g.foeBoard = this.boardRect(g.foeBlock, g.foeSize, padOuter, titleH)
+    }
+
     // 点击非焦点区域 → 切换焦点
     const self = this
     this.zone(u(40), g.mineBlock.top - u(8), L.W - u(80), g.mineBlock.h + u(8), function () {

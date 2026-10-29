@@ -36,7 +36,10 @@ function layout(scene, o) {
 function render(ctx, o, u) {
   const toPx = typeof u === 'function' ? u : function (v) { return v * 0.5 }
   const k = KINDS[o.kind || 'primary'] || KINDS.primary
-  const r = o.radius != null ? o.radius : theme.radius.md
+  // 圆角也必须换算：theme.radius 是设计稿单位，直接当像素用的话
+  // 375 屏上会画成 16px（设计意图 12px），平板上又缩不回去。
+  // 取 lg 与卡片同一档，按钮和卡片才是同一个圆度体系。
+  const r = o.radius != null ? o.radius : toPx(theme.radius.lg)
   const prev = ctx.globalAlpha
   ctx.globalAlpha = o.disabled ? 0.45 : (o.pressed ? 0.8 : 1)
 

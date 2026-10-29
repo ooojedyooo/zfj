@@ -58,16 +58,20 @@ class Lobby extends Scene {
 
     g.btnH = u(92)
     g.buttons = []
+    // 三个入口对应三种「我知道自己想跟谁打」的程度：
+    //   创建 —— 我来定规则，等人来找我
+    //   公开 —— 我不挑人，谁在等就进谁的房（列表里能看清名字、房间号、单步限时）
+    //   搜索 —— 我知道房名，只是不知道房间号（私密房在这一路，要密码）
     const items = [
-      { label: '创建房间', kind: 'primary', act: 'create' },
-      { label: '加入房间', kind: 'outline', act: 'join' },
-      { label: '随机匹配', kind: 'outline', act: 'random' }
+      { label: '创建房间', kind: 'primary', scene: 'room', params: { mode: 'create' } },
+      { label: '浏览公开房间', kind: 'outline', scene: 'rooms', params: { mode: 'public' } },
+      { label: '搜索房间名', kind: 'outline', scene: 'rooms', params: { mode: 'search' } }
     ]
     items.forEach(function (it) {
       const rect = { x: x, y: y, w: w, h: g.btnH, label: it.label, kind: it.kind }
       g.buttons.push(rect)
       this.zone(rect.x, rect.y, rect.w, rect.h, function () {
-        this.app.go('room', { mode: it.act })
+        this.app.go(it.scene, it.params)
       }.bind(this))
       y += g.btnH + u(20)
     }, this)
@@ -155,7 +159,8 @@ class Lobby extends Scene {
   onRules() {
     dialog.alert({
       title: '玩法简介',
-      content: '在 9×9 棋盘上布置 1-3 架飞机；双方轮流报点轰炸，机头被击中即整架击毁。先击毁对方全部飞机者获胜。'
+      content: '在 9×9 棋盘上布置 1-3 架飞机；双方轮流报点轰炸，机头被击中即整架击毁。先击毁对方全部飞机者获胜。\n\n'
+        + '每步限时 5~30 秒，由房主建房时设定。超时未出招，系统会替你从上到下、从左到右打第一格没炸过的位置；连续超时 5 次判负。'
     })
   }
 }

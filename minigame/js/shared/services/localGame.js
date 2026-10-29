@@ -110,6 +110,27 @@ class LocalGame {
     return this
   }
 
+  /** 本机还可炸的第一个空格（从上到下、从左到右）—— 超时自动轰炸用 */
+  firstEmptyTarget() {
+    for (let row = 1; row <= BOARD_SIZE; row++) {
+      for (let col = 1; col <= BOARD_SIZE; col++) {
+        if (!this.myProbes[key(row, col)]) return { row, col }
+      }
+    }
+    return null
+  }
+
+  /**
+   * 超时自动轰炸：替玩家按固定顺序打一炮
+   * 复用 fire()，所以命中判定、击毁、换手、胜负与手动出招完全一致
+   */
+  autoFire() {
+    const t = this.firstEmptyTarget()
+    if (!t) return null
+    const res = this.fire(t.row, t.col)
+    return { row: t.row, col: t.col, result: res.result, win: !!res.win }
+  }
+
   _end(winner, endType) {
     this.finished = true
     this.winner = winner

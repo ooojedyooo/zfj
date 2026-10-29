@@ -1132,6 +1132,250 @@ async function main() {
     }
   })
 
+  /* ---------- 9. 创建房间页：房名 / 单步限时 / 私密开关 ---------- */
+  section('[9] 创建房间：房名、单步限时、公开或私密')
+
+  app.go('room', { mode: 'create' })
+  const cr = app.scene
+  check('创建页三行设置都在卡片内，且卡片不压住底部按钮', function () {
+    const card = cr.geo.card
+    assert.ok(card.h > 0, '没有卡片')
+    ;[cr.geo.nameY, cr.geo.stepY, cr.geo.privY, cr.geo.hintY].forEach(function (y) {
+      assert.ok(y > card.y && y < card.y + card.h, '有一行跑出卡片：' + y)
+    })
+    assert.ok(card.y + card.h < 667 - 80, '卡片压到底部操作区')
+  })
+  check('默认不设密码 = 公开房间', function () {
+    assert.strictEqual(cr.usePassword, false)
+  })
+  check('房间名默认取昵称，非空且不超过 12 字', function () {
+    assert.ok(cr.roomName && cr.roomName.length > 0, '房间名为空')
+    assert.ok(cr.roomName.length <= 12, '房间名过长：' + cr.roomName)
+  })
+  check('每步限时默认 30 秒（范围内）', function () {
+    assert.strictEqual(cr.stepSeconds, 30)
+  })
+  check('步进器把限时夹在 5~30 秒之间', function () {
+    for (let i = 0; i < 10; i++) tapRect(cr.geo.stepPlus)
+    assert.strictEqual(cr.stepSeconds, 30, '上限失效：' + cr.stepSeconds)
+    for (let i = 0; i < 12; i++) tapRect(cr.geo.stepMinus)
+    assert.strictEqual(cr.stepSeconds, 5, '下限失效：' + cr.stepSeconds)
+    tapRect(cr.geo.stepPlus)
+    assert.strictEqual(cr.stepSeconds, 10, '步长应为 5 秒')
+  })
+  check('步进器两个按钮都在卡片内且不重叠', function () {
+    const a = cr.geo.stepMinus
+    const b = cr.geo.stepPlus
+    assert.ok(a.x + a.w < b.x, '两个按钮重叠了')
+    assert.ok(a.x >= cr.geo.card.x && b.x + b.w <= cr.geo.card.x + cr.geo.card.w, '按钮出卡片')
+  })
+  check('打开私密开关后出现密码行，且整卡仍在屏内', function () {
+    tapRect({ x: cr.geo.switch.x, y: cr.geo.switch.y, w: cr.geo.switch.w, h: cr.geo.switch.h })
+    assert.strictEqual(cr.usePassword, true)
+    assert.ok(cr.geo.pwdY > cr.geo.card.y && cr.geo.pwdY < cr.geo.card.y + cr.geo.card.h, '密码行跑出卡片')
+    assert.ok(cr.geo.card.y + cr.geo.card.h < 667 - 80, '加密码行后卡片压到底部按钮')
+    app.renderOnce()
+  })
+  check('关掉开关回到公开房间，密码行随之消失', function () {
+    tapRect({ x: cr.geo.switch.x, y: cr.geo.switch.y, w: cr.geo.switch.w, h: cr.geo.switch.h })
+    assert.strictEqual(cr.usePassword, false)
+    assert.strictEqual(cr.geo.pwdY, undefined)
+  })
+
+  /* ---------- 10. 公开房间列表 / 按名搜索 ---------- */
+  section('[10] 公开房间列表与按名搜索')
+
+  app.reset('lobby')
+  app.go('rooms', { mode: 'public' })
+  const rl = app.scene
+  await waitFor(function () { return rl.all.length > 0 }, '公开房间列表加载')
+
+  check('公开列表至少一条，且每条都有房间号 / 房名 / 单步限时', function () {
+    assert.ok(rl.all.length > 0)
+    rl.all.forEach(function (it) {
+      assert.ok(/^\d{6}$/.test(it.roomNo), '房间号不合法：' + it.roomNo)
+      assert.ok(it.roomName && it.roomName.length > 0, '缺少房名')
+      assert.ok(it.stepSeconds >= 5 && it.stepSeconds <= 30, '单步限时不合法：' + it.stepSeconds)
+    })
+  })
+  check('公开列表里只有公开房', function () {
+    assert.ok(!rl.all.some(function (it) { return it.hasPassword }), '公开列表混进了私密房')
+  })
+  check('列表项之间不重叠，也不压住底部按钮', function () {
+    const items = rl.geo.items
+    for (let i = 1; i < items.length; i++) {
+      assert.ok(items[i].y >= items[i - 1].y + items[i - 1].h, '第 ' + i + ' 项与上一项重叠')
+    }
+    const last = items[items.length - 1]
+    assert.ok(last.y + last.h < rl.geo.actionY, '最后一项压住底部按钮')
+  })
+  check('列表页可渲染', function () { app.renderOnce() })
+
+  // 搜索：模糊匹配 + 私密房也搜得到
+  app.reset('lobby')
+  app.go('rooms', { mode: 'search' })
+  const sr = app.scene
+  check('搜索页有搜索框，且初始为空态', function () {
+    assert.ok(sr.geo.searchBox, '没有搜索框')
+    assert.strictEqual(sr.all.length, 0, '没输关键字就出结果了')
+    app.renderOnce()
+  })
+
+  sr.keyword = '老周'
+  sr.load()
+  await waitFor(function () { return sr.all.length > 0 }, '搜索结果加载')
+  check('按房名模糊匹配命中多个房间', function () {
+    assert.ok(sr.all.length >= 2, '只命中 ' + sr.all.length + ' 条')
+    sr.all.forEach(function (it) {
+      assert.ok(it.roomName.indexOf('老周') >= 0, '混入了不匹配的房间：' + it.roomName)
+    })
+  })
+  check('搜索结果包含私密房（房名不是秘密，密码才是）', function () {
+    assert.ok(sr.all.some(function (it) { return it.hasPassword }), '私密房搜不到')
+  })
+  check('搜索页可渲染', function () { app.renderOnce() })
+
+  const privItem = sr.all.filter(function (it) { return it.hasPassword })[0]
+  MODAL.last = null
+  sr.onPick(privItem)
+  check('点私密房先弹密码框，不直接进去', function () {
+    assert.ok(MODAL.last && /密码/.test(MODAL.last.title || ''), '没有弹密码框')
+    assert.strictEqual(app.scene.name, 'rooms', '没输密码就进去了')
+  })
+
+  MODAL.last.success({ confirm: true, content: '0000' })
+  await sleep(30)
+  check('密码错误时留在列表页', function () {
+    assert.strictEqual(app.scene.name, 'rooms')
+  })
+
+  MODAL.last = null
+  sr.onPick(privItem)
+  MODAL.last.success({ confirm: true, content: '8888' })
+  await waitFor(function () {
+    const m = app.globalData.match
+    return m && m.roomNo === privItem.roomNo
+  }, '密码正确后进入房间')
+  check('密码正确后带上了房间的房名与单步限时', function () {
+    const m = app.globalData.match
+    assert.strictEqual(m.roomName, privItem.roomName)
+    assert.strictEqual(m.stepSeconds, privItem.stepSeconds)
+    // 双方齐了就直接进布阵；列表页 → 等待页 → 布阵这条链不断
+    assert.ok(app.scene.name === 'room' || app.scene.name === 'deploy',
+      '没有进入房间：' + app.scene.name)
+  })
+  if (app.scene.onExit) app.scene.onExit()
+
+  /* ---------- 11. 超时：自动轰炸 + 连续 5 次判负 ---------- */
+  section('[11] 回合超时：自动轰炸与连超判负')
+
+  const ROOMUTIL = require('../minigame/js/shared/utils/room')
+  const RULES = require('../minigame/js/shared/config/rules')
+  const { buildIndex } = require('../minigame/js/shared/utils/judge')
+
+  // 这一段直接驱动离线引擎：AI 出手延时调大，避免它在断言之间插一脚
+  offline.setDelays({ opponentJoin: 20, matchJoin: 20, ready: 20, foeAction: 60000 })
+  offline._reset()
+  await offline.createRoom({ planeCount: 3, stepSeconds: 5 })
+  const t0 = Date.now()
+  await offline.deploy({
+    planes: [{ planeId: 'standard', anchorRow: 5, anchorCol: 5, rotation: 0 }]
+  })
+  const ig = offline._getGame()
+  check('回合截止时间按房间设定的 5 秒算，而不是默认 30 秒', function () {
+    const left = ig.turnDeadline - t0
+    assert.ok(left <= 5200, '截止时间偏晚：' + left + 'ms')
+    assert.ok(left > 1000, '截止时间不对：' + left + 'ms')
+  })
+
+  ig.myTurn = true
+  ig.turnDeadline = Date.now() - 1
+  const tick1 = await offline.tick()
+  check('超时后自动轰炸，落点是第一行第一列', function () {
+    assert.strictEqual(tick1.auto, true, '没有自动轰炸')
+    assert.strictEqual(tick1.row, 1)
+    assert.strictEqual(tick1.col, 1)
+    assert.ok(ig.myProbes['1,1'], '战况里没有这一炮')
+    assert.strictEqual(tick1.streak, 1)
+  })
+
+  ig.myTurn = true
+  ig.turnDeadline = Date.now() - 1
+  const tick2 = await offline.tick()
+  check('第二次超时顺着同一行往右，且不重复炸同一格', function () {
+    assert.strictEqual(tick2.row, 1)
+    assert.strictEqual(tick2.col, 2)
+    assert.strictEqual(tick2.streak, 2)
+  })
+
+  ig.myTurn = true
+  ig.turnDeadline = Date.now() - 1
+  await offline.tick()
+  ig.myTurn = true
+  await offline.fire({ row: 9, col: 9 })
+  check('手动出招把连续超时清零', function () {
+    assert.ok(!ig.finished, '不该结束')
+    assert.strictEqual(offline._room().myStreak, 0, '连续超时没清零：' + offline._room().myStreak)
+    assert.ok(ig.myProbes['9,9'], '手动这一炮没落地')
+  })
+
+  // 重新开一局，专门测连超判负
+  offline._reset()
+  await offline.createRoom({ planeCount: 3, stepSeconds: 5 })
+  await offline.deploy({
+    planes: [{ planeId: 'standard', anchorRow: 1, anchorCol: 1, rotation: 0 }]
+  })
+  const ig2 = offline._getGame()
+  // 把对手布阵固定在棋盘下半部分 —— 否则随机布阵偶尔会摆在 (1,1)~(1,5)，
+  // 5 炮就把对方全歼了，测不到「连超判负」这条规则
+  ig2.foeDeployed = [{
+    planeId: 'standard', anchorRow: 5, anchorCol: 1, rotation: 0,
+    cells: getAbsoluteCells('standard', 5, 1, 0)
+  }]
+  ig2.foeIndex = buildIndex(ig2.foeDeployed)
+  let lastTick = null
+  for (let i = 0; i < RULES.MAX_TURN_TIMEOUT_STREAK; i++) {
+    ig2.myTurn = true
+    ig2.turnDeadline = Date.now() - 1
+    lastTick = await offline.tick()
+    if (ig2.finished) break
+  }
+  check('连续超时 5 次判负，不再往下拖', function () {
+    assert.strictEqual(ig2.finished, true, '没有判负')
+    assert.strictEqual(ig2.winner, 'foe')
+    assert.strictEqual(ig2.endType, 'timeout')
+    assert.strictEqual(lastTick.finished, true, 'tick 没报 finished')
+  })
+  check('判负前那一炮仍然落地（不是白丢一步）', function () {
+    assert.strictEqual(Object.keys(ig2.myProbes).length, RULES.MAX_TURN_TIMEOUT_STREAK,
+      '自动轰炸次数不对：' + Object.keys(ig2.myProbes).length)
+  })
+
+  /* ---------- 12. 房间规则纯函数 ---------- */
+  section('[12] 房间规则取值（纯函数）')
+
+  check('单步限时夹在 5~30 秒，非法值回落默认', function () {
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(3), 5)
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(99), 30)
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(17), 15)
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(''), RULES.TURN_DEFAULT)
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(undefined), RULES.TURN_DEFAULT)
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(NaN), RULES.TURN_DEFAULT)
+  })
+  check('房间名去空白、压空格、截断到 12 字', function () {
+    assert.strictEqual(ROOMUTIL.normalizeRoomName('  老周 \n 中队  '), '老周 中队')
+    assert.strictEqual(ROOMUTIL.normalizeRoomName('一二三四五六七八九十一二三四'), '一二三四五六七八九十一二')
+    assert.strictEqual(ROOMUTIL.normalizeRoomName('', '兜底名'), '兜底名')
+    assert.strictEqual(ROOMUTIL.normalizeRoomName(null), '未命名房间')
+  })
+  check('自动轰炸选点：从上到下、从左到右', function () {
+    assert.deepStrictEqual(ROOMUTIL.pickAutoTarget({}), { row: 1, col: 1 })
+    assert.deepStrictEqual(ROOMUTIL.pickAutoTarget({ '1,1': 'miss', '1,2': 'miss' }), { row: 1, col: 3 })
+    const all = {}
+    for (let r = 1; r <= 9; r++) for (let c = 1; c <= 9; c++) all[r + ',' + c] = 'miss'
+    assert.strictEqual(ROOMUTIL.pickAutoTarget(all), null)
+  })
+
   /* ---------- 收尾 ---------- */
   app.stop()
   offline._reset()

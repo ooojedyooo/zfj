@@ -83,8 +83,7 @@ DEVICES.forEach(function (d) {
     if (i > 0) overlap(lobby.geo.buttons[i - 1], b, '大厅按钮' + i, '大厅按钮' + (i + 1), errs)
   })
 
-  // --- 房间（create，含密码行）---
-  // 架数已移到布阵页，这一页只剩密码行 —— 检查密码与开关不压在一起、说明行不出卡片
+  // --- 房间（create：房名 / 单步限时 / 私密开关 / 密码行）---
   const room = app.get('room')
   app.go('room', { mode: 'create' })
   room.usePassword = true
@@ -92,14 +91,49 @@ DEVICES.forEach(function (d) {
   inside(room.geo.card, W, H, '房间卡片', errs)
   inside(room.geo.actionBtn, W, H, '创建按钮', errs)
   overlap(room.geo.card, room.geo.actionBtn, '房间卡片', '创建按钮', errs)
-  inside(room.geo.switch, W, H, '密码开关', errs)
-  if (room.geo.hintY > room.geo.card.y + room.geo.card.h) {
-    errs.push('说明文字超出卡片底 ' + Math.round(room.geo.hintY))
+  inside(room.geo.switch, W, H, '私密开关', errs)
+  inside(room.geo.stepMinus, W, H, '限时−', errs)
+  inside(room.geo.stepPlus, W, H, '限时＋', errs)
+  overlap(room.geo.stepMinus, room.geo.stepPlus, '限时−', '限时＋', errs)
+  // 三行设置 + 密码行 + 说明行都必须落在卡片里
+  ;[['房名', room.geo.nameY], ['单步限时', room.geo.stepY], ['私密', room.geo.privY],
+    ['密码', room.geo.pwdY], ['说明', room.geo.hintY]].forEach(function (p) {
+    if (p[1] == null) { errs.push(p[0] + ' 行不存在'); return }
+    if (p[1] < room.geo.card.y || p[1] > room.geo.card.y + room.geo.card.h) {
+      errs.push(p[0] + ' 行跑出卡片 ' + Math.round(p[1]))
+    }
+  })
+  // 密码行不能压住说明行
+  if (room.geo.pwdY + 24 > room.geo.hintY) errs.push('密码行压住说明行')
+
+  // --- 房间列表（公开 / 搜索）---
+  const rl = app.get('rooms')
+  app.go('rooms', { mode: 'public' })
+  const fake = []
+  for (let i = 0; i < 6; i++) {
+    fake.push({
+      roomNo: '20481' + i, roomName: '房间示例' + i,
+      stepSeconds: 15, hasPassword: i % 2 === 0, players: 1
+    })
   }
-  // 密码文字（pwdBoxY）不能滑出卡片底
-  if (room.geo.pwdBoxY && room.geo.pwdBoxY > room.geo.card.y + room.geo.card.h - 8) {
-    errs.push('密码文字滑出卡片底 ' + Math.round(room.geo.pwdBoxY))
-  }
+  rl.all = fake
+  rl.layout()
+  rl.geo.items.forEach(function (r, i) { inside(r, W, H, '列表项' + (i + 1), errs) })
+  rl.geo.items.forEach(function (r, i) {
+    if (i > 0) overlap(rl.geo.items[i - 1], r, '列表项' + i, '列表项' + (i + 1), errs)
+  })
+  rl.geo.actionRects.forEach(function (r, i) { inside(r, W, H, '列表按钮' + (i + 1), errs) })
+  const lastItem = rl.geo.items[rl.geo.items.length - 1]
+  overlap(lastItem, rl.geo.actionRects[0], '最后一项', '列表按钮', errs)
+
+  app.go('rooms', { mode: 'search' })
+  rl.keyword = '老周'
+  rl.all = fake
+  rl.layout()
+  inside(rl.geo.searchBox, W, H, '搜索框', errs)
+  overlap(rl.geo.searchBox, rl.geo.items[0], '搜索框', '第一项', errs)
+  const lastSearchItem = rl.geo.items[rl.geo.items.length - 1]
+  overlap(lastSearchItem, rl.geo.actionRects[0], '搜索最后一项', '列表按钮', errs)
 
   // --- 布阵（3 架）---
   app.globalData.match = { roomId: 'smoke', roomNo: '000000', planeCount: 3 }

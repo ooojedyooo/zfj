@@ -36,6 +36,8 @@ module.exports = {
   createRoom: route('createRoom'),
   joinRoom: route('joinRoom'),
   matchRoom: route('matchRoom'),
+  listRooms: route('listRooms'),
+  searchRooms: route('searchRooms'),
   getRoom: route('getRoom'),
   leaveRoom: route('leaveRoom'),
 

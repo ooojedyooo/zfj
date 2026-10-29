@@ -50,6 +50,7 @@ const app = createApp({
   info: info,
   scenes: {
     lobby: require('./js/scenes/lobby'),
+    rooms: require('./js/scenes/rooms'),
     room: require('./js/scenes/room'),
     deploy: require('./js/scenes/deploy'),
     battle: require('./js/scenes/battle'),

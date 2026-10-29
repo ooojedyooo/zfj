@@ -13,7 +13,7 @@ const api = require('../shared/services/cloudApi')
 const rivals = require('../shared/services/rivals')
 const { createMatrix } = require('../shared/utils/board')
 const { getAbsoluteCells } = require('../shared/utils/plane')
-const { RESULT, BOARD_SIZE, TIMEOUT } = require('../shared/config/rules')
+const { RESULT, BOARD_SIZE, TIMEOUT, MAX_TURN_TIMEOUT_STREAK } = require('../shared/config/rules')
 const { EMOTES, EMOTE_HIDE_MS } = require('../shared/config/social')
 
 const RESULT_TEXT = {}
@@ -38,7 +38,10 @@ class Battle extends Scene {
     this.myDestroyed = 0
     this.foeDestroyed = 0
     this.foePlaneCount = 0
+    this.stepSeconds = TIMEOUT.TURN
     this.turnSeconds = TIMEOUT.TURN
+    this.myStreak = 0
+    this.lastAutoAt = 0
     this.emoteBarOpen = false
     this.emoteBubble = null
     this.lastBattle = null
@@ -57,6 +60,11 @@ class Battle extends Scene {
     const match = app.globalData.match || {}
     this.roomId = match.roomId || ''
     this.planeCount = this.planeCount || match.planeCount || 1
+    // 本局每步限时由房主在创建房间时定（5~30 秒），不是全局常量
+    this.stepSeconds = match.stepSeconds || TIMEOUT.TURN
+    this.turnSeconds = this.stepSeconds
+    this.myStreak = 0
+    this.lastAutoAt = 0
     this.resultHandled = false
     this.ticking = false
     this.tickAcc = 0
@@ -149,6 +157,10 @@ class Battle extends Scene {
     const counts = b.counts || {}
     this.foePlaneCount = counts[this.foeOpenid] || this.planeCount || 0
 
+    // 单步限时与连续超时次数都从服务端来：客户端只负责显示，不自己数
+    if (b.stepSeconds) this.stepSeconds = b.stepSeconds
+    this.myStreak = ((b.streak || {})[this.myOpenid]) || 0
+
     const mine = (b.marks && b.marks[this.myOpenid]) || {}
     const incoming = (b.incoming && b.incoming[this.myOpenid]) || {}
     const stats = (b.stats && b.stats[this.myOpenid]) || { kill: 0, lost: 0, shots: 0 }
@@ -161,13 +173,20 @@ class Battle extends Scene {
     this.incoming = incoming
     this.myTurn = myTurn
     this.finished = finished
-    this.statusText = finished ? '对局结束' : (myTurn ? '轮到你开炮' : '等待对方行动…')
+    this.statusText = this.statusLabel(finished, myTurn)
     this.myShots = stats.shots
     this.foeShots = Object.keys(incoming).length
     this.myDestroyed = stats.lost
     this.foeDestroyed = stats.kill
     this.focus = finished ? this.focus : (myTurn ? 'foe' : 'mine')
     if (finished) { this.emoteBarOpen = false }
+
+    // 服务端替我打了一炮（回合超时）：得说出来，否则玩家会以为「我没点，怎么炸了」
+    const lm = b.lastMove
+    if (lm && lm.auto && lm.by === this.myOpenid && lm.at !== this.lastAutoAt) {
+      this.lastAutoAt = lm.at
+      this.app.feedback('超时 · 已自动轰炸 横' + lm.col + '，竖' + lm.row, 1400)
+    }
 
     const needLayout = focusChanged || (this.wasTurn !== myTurn) || (this.wasFinished !== finished)
     this.wasTurn = myTurn
@@ -185,6 +204,16 @@ class Battle extends Scene {
       const self = this
       setTimeout(function () { self.goResult(b) }, 800)
     }
+  }
+
+  /** 状态条文案：超时计数直接写进这一句，玩家不用再去别处找数字 */
+  statusLabel(finished, myTurn) {
+    if (finished) return '对局结束'
+    const base = myTurn ? '轮到你开炮' : '等待对方行动…'
+    if (this.myStreak > 0) {
+      return base + ' · 连续超时 ' + this.myStreak + '/' + MAX_TURN_TIMEOUT_STREAK
+    }
+    return base
   }
 
   requestTick() {
@@ -307,15 +336,26 @@ class Battle extends Scene {
     const c = theme.color
 
     // 状态条
+    const urgent = !this.finished && this.myTurn && this.turnSeconds <= 5
+    const warnStreak = !this.finished && this.myStreak > 0
     draw.text(ctx, this.statusText, u(40), g.statusY, {
-      size: u(theme.size.body), weight: this.myTurn && !this.finished ? 500 : 400,
-      color: this.myTurn && !this.finished ? c.primary : c.textMuted
+      size: u(theme.size.body),
+      weight: this.myTurn && !this.finished ? 500 : 400,
+      color: warnStreak ? c.warnDark : (this.myTurn && !this.finished ? c.primary : c.textMuted)
     })
-    const shots = '我方 ' + this.myShots + ' · 对方 ' + this.foeShots
-    const cd = this.finished ? '' : '  ·  ' + this.turnSeconds + 's'
-    draw.text(ctx, shots + cd, L.W - u(40), g.statusY, {
-      size: u(theme.size.tiny), color: c.textMuted, align: 'right'
-    })
+    // 倒计时单独画：只剩 5 秒时变红，提醒「该点了，不然自动轰炸」
+    const cdText = this.finished ? '' : this.turnSeconds + 's'
+    const cdW = cdText ? draw.measure(ctx, cdText, u(theme.size.tiny), 500) : 0
+    if (cdText) {
+      draw.text(ctx, cdText, L.W - u(40), g.statusY, {
+        size: u(theme.size.tiny), weight: urgent ? 500 : 400,
+        color: urgent ? c.danger : c.textMuted, align: 'right'
+      })
+    }
+    draw.text(ctx, '我方 ' + this.myShots + ' · 对方 ' + this.foeShots,
+      L.W - u(40) - (cdText ? cdW + u(18) : 0), g.statusY, {
+        size: u(theme.size.tiny), color: c.textMuted, align: 'right'
+      })
 
     if (!api.isCloud) {
       draw.text(ctx, '离线试玩模式 · 对手由本地 AI 扮演', u(40), g.statusY + u(26), {

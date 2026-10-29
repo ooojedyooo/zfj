@@ -9,17 +9,17 @@ const ui = require('../widgets/ui')
 const share = require('../core/share')
 const api = require('../shared/services/cloudApi')
 const rivals = require('../shared/services/rivals')
-const { END_TYPE } = require('../shared/config/rules')
+const { END_TYPE, MAX_TURN_TIMEOUT_STREAK } = require('../shared/config/rules')
 
 const END_TEXT = {}
 END_TEXT[END_TYPE.ALL_DESTROYED] = '击毁对方全部飞机'
 END_TEXT[END_TYPE.SURRENDER] = '对方投降'
-END_TEXT[END_TYPE.TIMEOUT] = '对方超时判负'
+END_TEXT[END_TYPE.TIMEOUT] = '对方连续超时 ' + MAX_TURN_TIMEOUT_STREAK + ' 次判负'
 
 const LOSE_TEXT = {}
 LOSE_TEXT[END_TYPE.ALL_DESTROYED] = '己方飞机全部被击毁'
 LOSE_TEXT[END_TYPE.SURRENDER] = '己方主动投降'
-LOSE_TEXT[END_TYPE.TIMEOUT] = '己方连续超时判负'
+LOSE_TEXT[END_TYPE.TIMEOUT] = '己方连续超时 ' + MAX_TURN_TIMEOUT_STREAK + ' 次判负'
 
 class Result extends Scene {
   constructor(app) {

@@ -67,6 +67,8 @@ module.exports = {
   createRoom: (p) => call(FUNCTIONS.ROOM, 'create', p),
   joinRoom: (p) => call(FUNCTIONS.ROOM, 'join', p),
   matchRoom: (p) => call(FUNCTIONS.ROOM, 'match', p),
+  listRooms: (p) => call(FUNCTIONS.ROOM, 'list', p),
+  searchRooms: (p) => call(FUNCTIONS.ROOM, 'search', p),
   getRoom: (p) => call(FUNCTIONS.ROOM, 'get', p),
   leaveRoom: (p) => call(FUNCTIONS.ROOM, 'leave', p),
 

@@ -9,75 +9,18 @@
 // 运行：node scripts/test-minigame.js
 const assert = require('assert')
 
+
 /* ================= 桩环境（必须在 require 入口前装好） ================= */
+// 桩本体在 scripts/lib/wx-stub.js —— 与界面预览脚本共用同一份，
+// 免得两边各写一套后漂移，出现「预览正常、测试却挂」的鬼故事。
 
-const INFO = {
-  windowWidth: 375,
-  windowHeight: 667,
-  pixelRatio: 2,
-  statusBarHeight: 20,
-  safeArea: { top: 20, bottom: 667 }
-}
-
-function makeCtx() {
-  const calls = []
-  const rec = function (name) {
-    return function () { calls.push(name) }
-  }
-  return {
-    calls: calls,
-    globalAlpha: 1,
-    fillStyle: '',
-    strokeStyle: '',
-    lineWidth: 1,
-    font: '',
-    textAlign: '',
-    textBaseline: '',
-    scale: rec('scale'),
-    clearRect: rec('clearRect'),
-    fillRect: rec('fillRect'),
-    beginPath: rec('beginPath'),
-    moveTo: rec('moveTo'),
-    lineTo: rec('lineTo'),
-    arc: rec('arc'),
-    arcTo: rec('arcTo'),
-    closePath: rec('closePath'),
-    fill: rec('fill'),
-    stroke: rec('stroke'),
-    save: rec('save'),
-    restore: rec('restore'),
-    fillText: rec('fillText'),
-    setTransform: rec('setTransform'),
-    measureText: function (s) { return { width: String(s).length * 7 } }
-  }
-}
+const { makeCtx, installWx } = require('./lib/wx-stub')
 
 const CTX = makeCtx()
-const STORE = {}
+const _stub = installWx(CTX)
+const STORE = _stub.STORE
 // 弹窗桩：记下最后一次弹窗的参数，让「拦住了没有、说了什么」可以断言
-const MODAL = { last: null, count: 0 }
-
-global.wx = {
-  getSystemInfoSync: function () { return INFO },
-  getLaunchOptionsSync: function () { return { query: {} } },
-  createCanvas: function () { return { width: 0, height: 0, getContext: function () { return CTX } } },
-  showModal: function (o) { MODAL.last = o || {}; MODAL.count++ },
-  showToast: function () {},
-  hideToast: function () {},
-  showShareMenu: function () {},
-  shareAppMessage: function () {},
-  onShareAppMessage: function () {},
-  getStorageSync: function (k) { return STORE[k] || '' },
-  setStorageSync: function (k, v) { STORE[k] = v },
-  removeStorageSync: function (k) { delete STORE[k] },
-  onTouchStart: function () {},
-  onTouchMove: function () {},
-  onTouchEnd: function () {},
-  onTouchCancel: function () {},
-  onShow: function () {},
-  onHide: function () {},
-  cloud: null
-}
+const MODAL = _stub.MODAL
 
 /* ================= 加载被测对象 ================= */
 

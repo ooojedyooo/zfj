@@ -65,7 +65,11 @@ function shapeOf(planeId, rotation) {
  * @param {number} x 方框左上角
  * @param {number} y
  * @param {number} size 方框边长
- * @param {Object} o { planeId, rotation, on, color, headColor, pad }
+ * @param {Object} o { planeId, rotation, on, color, headColor, pad, join }
+ *
+ * join：把 10 个格子连成**一整架**（格间不留缝 + 外轮廓勾边）。
+ *   棋盘上留缝是对的（小格子里要靠缝数格子、辨认重叠），
+ *   但放大到大厅卡片那种尺寸，缝会被同比放大，看起来就成了一堆散落的方块。
  */
 function render(ctx, x, y, size, o) {
   const opt = o || {}
@@ -79,7 +83,9 @@ function render(ctx, x, y, size, o) {
   const on = opt.on !== false
   const body = on ? (opt.color || theme.color.plane) : theme.color.planeOff
   const headColor = on ? (opt.headColor || theme.color.planeHead) : theme.color.planeOffHead
-  const gap = Math.max(0.4, cell * 0.1)
+  const join = !!opt.join
+  const gap = join ? 0 : Math.max(0.4, cell * 0.1)
+  const radius = cell * (join ? 0.08 : 0.24)
 
   shape.cells.forEach(function (c) {
     draw.fillRect(
@@ -89,9 +95,35 @@ function render(ctx, x, y, size, o) {
       cell - gap * 2,
       cell - gap * 2,
       c.isHead ? headColor : body,
-      cell * 0.24
+      radius
     )
   })
+
+  if (!join) return
+
+  /* ---- 外轮廓：只描「邻居不在集合里」的那几条边 ---- */
+  // 逐格画边框会在两格交界处留下内线，把整架飞机切成小方块 —— 正是要避免的。
+  // 只描外沿，10 格才连成一个完整的轮廓。
+  const has = {}
+  shape.cells.forEach(function (c) { has[c.r + ',' + c.c] = true })
+  // 描边强度可调：卡片上要 0.55 才有轮廓感，装饰水印传 0.1 就够
+  const line = opt.outline != null ? opt.outline : 0.55
+  ctx.strokeStyle = on
+    ? 'rgba(214, 236, 255, ' + line + ')'
+    : 'rgba(126, 150, 174, ' + (line * 0.6) + ')'
+  ctx.lineWidth = Math.max(1, cell * 0.07)
+  ctx.beginPath()
+  shape.cells.forEach(function (c) {
+    const L = ox + c.c * cell
+    const T = oy + c.r * cell
+    const R = L + cell
+    const B = T + cell
+    if (!has[c.r - 1 + ',' + c.c]) { ctx.moveTo(L, T); ctx.lineTo(R, T) }
+    if (!has[c.r + 1 + ',' + c.c]) { ctx.moveTo(L, B); ctx.lineTo(R, B) }
+    if (!has[c.r + ',' + (c.c - 1)]) { ctx.moveTo(L, T); ctx.lineTo(L, B) }
+    if (!has[c.r + ',' + (c.c + 1)]) { ctx.moveTo(R, T); ctx.lineTo(R, B) }
+  })
+  ctx.stroke()
 }
 
 /** 图标的横向留白比例（供调用方算槽位宽高） */

@@ -757,7 +757,7 @@ class Deploy extends Scene {
       Button.render(ctx, {
         x: r.x, y: r.y, w: r.w, h: r.h,
         label: labels[i], kind: kinds[i], disabled: disabled
-      })
+      }, u)
     })
 
     // 就绪按钮兼任「状态指示器」：有几架不合规 / 数量差几架，按钮自己就说出来（不用点才知道）。
@@ -772,7 +772,7 @@ class Deploy extends Scene {
       kind: (pending > 0 || diff !== 0) ? 'warn' : 'primary',
       loading: this.readying || this.waiting,
       loadingText: this.waiting ? '等待对手…' : '提交中…'
-    }))
+    }), u)
 
     if (this.waiting) {
       ui.spinner(ctx, L, L.W / 2, L.H * 0.5, u(36), this.phase * 3)

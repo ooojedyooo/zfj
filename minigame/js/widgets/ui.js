@@ -17,13 +17,15 @@ function titleBlock(ctx, layout, title, subtitle) {
   return y + u(20)
 }
 
-/** 卡片底板 */
+/** 卡片底板：深面板 + 顶部高光 + 下沉投影 */
 function card(ctx, layout, x, y, w, h) {
   const u = layout.u.bind(layout)
   const r = u(theme.radius.lg)
-  // 柔和阴影：往下一层的极淡块。比 shadowBlur 便宜得多（每帧都画，真机上差一个量级）
-  draw.fillRect(ctx, x, y + u(4), w, h, 'rgba(12, 68, 124, 0.05)', r)
-  draw.fillRect(ctx, x, y, w, h, theme.color.card, r)
+  // 投影：往下错开的深色块。比 shadowBlur 便宜得多（每帧都画，真机上差一个量级）
+  draw.fillRect(ctx, x, y + u(6), w, h, theme.color.shade, r)
+  draw.fillRect(ctx, x, y, w, h, theme.color.panel, r)
+  // 深色面板能「立起来」，靠的就是上沿这一条 1px 亮线（光从上方来）
+  draw.panelSheen(ctx, x, y, w, r)
   draw.strokeRect(ctx, x, y, w, h, theme.color.border, r, 1)
 }
 

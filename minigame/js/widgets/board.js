@@ -229,14 +229,18 @@ function render(ctx, o, u) {
                 align: 'center', baseline: 'middle'
               })
             } else {
+              // 机头格印序号。字色用**近黑**而不是白：
+              // 深色棋盘上机头被提亮成 #9BD2FF 这类浅色，白字压上去几乎看不见；
+              // 反过来说，浅底 + 深字才是有对比的那一对。
               draw.text(ctx, String(info.p + 1), cx, cy + cell * 0.02, {
-                size: cell * 0.52, weight: 600, color: '#FFFFFF',
+                size: cell * 0.52, weight: 600, color: c.primaryInk,
                 align: 'center', baseline: 'middle'
               })
             }
           } else {
-            // 无身份色（对战阶段）→ 白点标记朝向
-            draw.circle(ctx, cx, cy, Math.max(1.5, cell * 0.14), '#FFFFFF')
+            // 无身份色（对战阶段）→ 一个圆点标记朝向。
+            // 同样用近黑色：机头本身已经是浅色块了
+            draw.circle(ctx, cx, cy, Math.max(1.5, cell * 0.14), c.primaryInk)
           }
         }
 

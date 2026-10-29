@@ -90,12 +90,15 @@ class Rooms extends Scene {
 
     g.x = x
     g.w = w
-    g.back = { x: u(24), y: L.safeTop + u(16), w: u(140), h: u(56) }
-    g.titleY = L.safeTop + u(120)
-    g.refresh = { x: L.W - u(40) - u(120), y: L.safeTop + u(74), w: u(120), h: u(56) }
+    // 返回 / 标题 / 刷新 必须在同一条中线上。
+    // 原来三个 y 各写各的（42 / 80 / 71），视觉上标题像掉下去了半行。
+    const barCy = L.safeTop + u(96)
+    g.back = { x: u(24), y: barCy - u(28), w: u(140), h: u(56) }
+    g.titleY = barCy
+    g.refresh = { x: L.W - u(40) - u(120), y: barCy - u(28), w: u(120), h: u(56) }
     this.zone(g.refresh.x, g.refresh.y, g.refresh.w, g.refresh.h, this.load.bind(this))
 
-    let y = g.titleY + u(72)
+    let y = g.titleY + u(82)
 
     if (this.mode === 'search') {
       g.searchBox = { x: x, y: y, w: w, h: u(88) }

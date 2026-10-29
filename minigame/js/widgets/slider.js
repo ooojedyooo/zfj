@@ -13,7 +13,7 @@
 const theme = require('../core/theme')
 const draw = require('../core/draw')
 
-const TRACK_H = 12      // 轨道粗细（设计稿单位）
+const TRACK_H = 18     // 轨道粗细（设计稿单位）。深色面板上 12 太细，看着像一条发丝
 const KNOB_R = 24       // 手柄半径
 
 /** 值 → 手柄圆心 x */
@@ -46,13 +46,15 @@ function render(ctx, u, rect, o) {
   if (o.disabled) ctx.globalAlpha = prev * 0.45
 
   // 轨道：底槽 + 已填充段（填充色就是「当前值」，不用看数字也能估）
-  draw.fillRect(ctx, x0, cy - th / 2, x1 - x0, th, c.border, th / 2)
+  // 底槽用 borderHi 而不是 border：深面板上 border 几乎和背景同色，
+  // 只剩「已填充那一段」能看见，滑块的可用范围就读不出来了
+  draw.fillRect(ctx, x0, cy - th / 2, x1 - x0, th, c.borderHi, th / 2)
   if (knobX > x0) draw.fillRect(ctx, x0, cy - th / 2, knobX - x0, th, c.primary, th / 2)
 
   // 手柄：白底 + 主色描边，中间再压一个更小的实心点 ——
-  // 纯白圆在浅底上容易糊掉，双环让它始终有边界。
+  // 纯白圆在深底上虽然亮，但没有边界；双环让它始终看得出是个「抓手」
   draw.circle(ctx, knobX, cy, u(KNOB_R), '#FFFFFF')
-  draw.strokeCircle(ctx, knobX, cy, u(KNOB_R) - 1, c.primary, 2)
+  draw.strokeCircle(ctx, knobX, cy, u(KNOB_R) - 1, c.primary, 3)
   draw.circle(ctx, knobX, cy, u(KNOB_R - 12), c.primary)
 
   // 两端刻度：滑块不给范围，玩家不知道能拖到哪

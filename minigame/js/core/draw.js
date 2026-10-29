@@ -122,12 +122,73 @@ function ellipsis(ctx, str, maxWidth, size, weight) {
   return s + '…'
 }
 
-/** 铺底色 */
+/**
+ * 垂直渐变填充
+ *
+ * 为什么这里要判 createLinearGradient 存在：部分老基础库与测试桩没有这个方法，
+ * 直接调会抛「is not a function」整屏白掉。降级成一整块最深色，
+ * 视觉上少一层氛围，但界面依然完整可用。
+ * @param {Array} stops [{ at: 0, color }, { at: 1, color }]
+ */
+function vGradient(ctx, x, y, w, h, stops) {
+  if (typeof ctx.createLinearGradient !== 'function') {
+    const last = stops[stops.length - 1]
+    fillRect(ctx, x, y, w, h, last.color, 0)
+    return
+  }
+  const g = ctx.createLinearGradient(x, y, x, y + h)
+  for (let i = 0; i < stops.length; i++) g.addColorStop(stops[i].at, stops[i].color)
+  ctx.fillStyle = g
+  ctx.fillRect(x, y, w, h)
+}
+
+/**
+ * 雷达网格
+ *
+ * 单次 beginPath + 多条 moveTo/lineTo，只 stroke 一次 —— 逐条 line() 会变成
+ * 几十次独立 stroke，每帧都重画的背景下这个差别在真机上是能感觉到的。
+ */
+function radarGrid(ctx, w, h, step, color, ox, oy) {
+  const s = Math.max(2, step)
+  ctx.strokeStyle = color
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  for (let x = (ox || 0) % s; x <= w; x += s) {
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, h)
+  }
+  for (let y = (oy || 0) % s; y <= h; y += s) {
+    ctx.moveTo(0, y)
+    ctx.lineTo(w, y)
+  }
+  ctx.stroke()
+}
+
+/**
+ * 面板顶部高光条
+ *
+ * 深色界面的「立体感」几乎全靠这一条 1px 亮线：光从上方来，
+ * 面板上沿被照亮、下沿沉进阴影。不用 shadowBlur（太贵），
+ * 也不用渐变（一条线就够）。
+ */
+function panelSheen(ctx, x, y, w, r, color) {
+  const inset = Math.min(r == null ? theme.radius.md : r, w / 2)
+  line(ctx, x + inset, y + 1, x + w - inset, y + 1, color || theme.color.sheen, 1)
+}
+
+/** 铺底色：深海渐变 + 极淡雷达网格 */
 function background(ctx, layout) {
-  fillRect(ctx, 0, 0, layout.W, layout.H, theme.color.bg, 0)
+  const c = theme.color
+  vGradient(ctx, 0, 0, layout.W, layout.H, [
+    { at: 0, color: c.bgTop },
+    { at: 0.45, color: c.bg },
+    { at: 1, color: c.bgBottom }
+  ])
+  radarGrid(ctx, layout.W, layout.H, layout.u(120), c.grid)
 }
 
 module.exports = {
   roundRectPath, fillRect, strokeRect, circle, strokeCircle,
-  line, dashedLine, text, measure, ellipsis, background
+  line, dashedLine, text, measure, ellipsis,
+  vGradient, radarGrid, panelSheen, background
 }

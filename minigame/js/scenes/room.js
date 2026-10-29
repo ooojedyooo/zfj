@@ -126,8 +126,10 @@ class Room extends Scene {
 
     g.x = x
     g.w = w
-    g.back = { x: u(24), y: L.safeTop + u(16), w: u(140), h: u(56) }
-    g.titleY = L.safeTop + u(120)
+    // 返回 / 标题同一条中线（与房间列表页保持一致）
+    const barCy = L.safeTop + u(96)
+    g.back = { x: u(24), y: barCy - u(28), w: u(140), h: u(56) }
+    g.titleY = barCy
 
     let y = g.titleY + u(72)
     const btnH = u(92)
@@ -150,7 +152,7 @@ class Room extends Scene {
       // 卡片高度：join 两条输入框 / create 四行设置（+密码行）/ random 一句说明
       let cardH = u(200)
       if (this.mode === 'join') cardH = u(240)
-      if (this.mode === 'create') cardH = u(546) + (this.usePassword ? u(76) : 0)
+      if (this.mode === 'create') cardH = u(574) + (this.usePassword ? u(76) : 0)
       g.card = { x: x, y: y, w: w, h: cardH }
 
       if (this.mode === 'join') {
@@ -164,7 +166,7 @@ class Room extends Scene {
         g.nameY = y + u(64)
         g.planeY = y + u(164)
         g.stepY = y + u(268)
-        g.privY = y + u(428)
+        g.privY = y + u(452)
         g.hintY = y + cardH - u(28)
 
         // ① 房间名：整行可点，弹输入框改
@@ -275,8 +277,8 @@ class Room extends Scene {
         })
       }
 
-      Button.render(ctx, Object.assign({}, g.inviteBtn, { label: '邀请好友加入', kind: 'primary' }))
-      Button.render(ctx, Object.assign({}, g.cancelBtn, { label: '取消', kind: 'outline' }))
+      Button.render(ctx, Object.assign({}, g.inviteBtn, { label: '邀请好友加入', kind: 'primary' }), u)
+      Button.render(ctx, Object.assign({}, g.cancelBtn, { label: '取消', kind: 'outline' }), u)
       return
     }
 
@@ -321,10 +323,13 @@ class Room extends Scene {
         draw.text(ctx, '飞机数量', lx, g.planeY, { size: body, color: c.text })
         g.planeRects.forEach(function (r) {
           const on = r.planes === this.planeCount
-          draw.fillRect(ctx, r.x, r.y, r.w, r.h, on ? c.primary : c.gray, u(theme.radius.sm))
+          // 未选中也要画出来：只用底色差异，玩家看不出这里是可以点的三段控件。
+          draw.fillRect(ctx, r.x, r.y, r.w, r.h, on ? c.primary : c.panelHi, u(theme.radius.sm))
+          if (!on) draw.strokeRect(ctx, r.x, r.y, r.w, r.h, c.borderHi, u(theme.radius.sm), 1)
           draw.text(ctx, r.planes + ' 架', r.x + r.w / 2, r.y + r.h / 2, {
             size: u(theme.size.small),
-            color: on ? '#FFFFFF' : c.text,
+            // 选中是亮青底 → 用近黑字；未选中是深底 → 用亮字
+            color: on ? c.primaryInk : c.text,
             weight: on ? 500 : 400,
             align: 'center'
           })
@@ -351,11 +356,13 @@ class Room extends Scene {
           size: body, color: c.text
         })
         const s = g.switch
-        draw.fillRect(ctx, s.x, s.y, s.w, s.h, this.usePassword ? c.primary : c.gray, s.h / 2)
+        // 关掉的轨道不能太暗：深色界面上「一条看不见的槽 + 一个白球」根本读不出是开关。
+        draw.fillRect(ctx, s.x, s.y, s.w, s.h, this.usePassword ? c.primary : c.panelHi, s.h / 2)
+        if (!this.usePassword) draw.strokeRect(ctx, s.x, s.y, s.w, s.h, c.borderHi, s.h / 2, 1)
         const knob = s.h - u(8)
         draw.circle(ctx,
           this.usePassword ? s.x + s.w - s.h / 2 : s.x + s.h / 2,
-          s.y + s.h / 2, knob / 2, '#FFFFFF')
+          s.y + s.h / 2, knob / 2, this.usePassword ? c.primaryInk : '#FFFFFF')
         draw.text(ctx,
           this.usePassword ? '凭密码进入 · 房名照样能被搜到' : '谁都能在公开列表里看到并直接进来',
           lx, g.privY + u(38), { size: u(theme.size.tiny), color: c.textMuted })
@@ -386,7 +393,7 @@ class Room extends Scene {
     const label = this.mode === 'join' ? '加入房间' : (this.mode === 'random' ? '开始匹配' : '创建房间')
     Button.render(ctx, Object.assign({}, g.actionBtn, {
       label: label, kind: 'primary', loading: this.loading
-    }))
+    }), u)
   }
 
   drawField(ctx, x, y, w, label, value, placeholder) {

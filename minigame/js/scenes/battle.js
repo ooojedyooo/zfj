@@ -412,7 +412,7 @@ class Battle extends Scene {
 
       Button.render(ctx, Object.assign({}, g.fireBtn, {
         label: '发射', kind: 'primary', disabled: !this.selected
-      }))
+      }), u)
 
       if (this.emoteBarOpen && g.emoteRects) {
         draw.fillRect(ctx, u(40), g.emoteBarY, L.W - u(80), u(104), c.card, u(theme.radius.lg))
@@ -426,8 +426,8 @@ class Battle extends Scene {
 
     Button.render(ctx, Object.assign({}, g.surrenderBtn, {
       label: '投降', kind: 'danger', disabled: this.finished
-    }))
-    Button.render(ctx, Object.assign({}, g.inviteBtn, { label: '邀请好友', kind: 'outline' }))
+    }), u)
+    Button.render(ctx, Object.assign({}, g.inviteBtn, { label: '邀请好友', kind: 'outline' }), u)
 
     // 表情气泡
     if (this.emoteBubble) {

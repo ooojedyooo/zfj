@@ -145,7 +145,7 @@ class Result extends Scene {
 
     g.buttons.forEach(function (b, i) {
       const kind = i === 0 ? 'primary' : 'outline'
-      Button.render(ctx, { x: b.x, y: b.y, w: b.w, h: b.h, label: b.label, kind: kind })
+      Button.render(ctx, { x: b.x, y: b.y, w: b.w, h: b.h, label: b.label, kind: kind }, u)
     })
   }
 

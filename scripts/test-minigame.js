@@ -630,6 +630,21 @@ async function main() {
     assert.ok(kinds.indexOf('ghostBad') >= 0, '没有红框：' + kinds.join(','))
     assert.ok(kinds.indexOf('hint') < 0, '系统还在替玩家找位置（不该再有吸附虚线框）')
   })
+  check('拖拽中棋盘上不再留那架（本体与浅色留痕都没了）', function () {
+    const p = deploy.placed[0]
+    const m = deploy.cells()
+    p.cells.forEach(function (c) {
+      if (c.row < 1 || c.row > 9 || c.col < 1 || c.col > 9) return
+      // 本局只有 1 架，原位置只要还有东西就是「那一架没被拿走」
+      assert.ok(!m[c.row - 1][c.col - 1],
+        '原位置 ' + c.row + ',' + c.col + ' 还画着东西')
+    })
+
+    const marks = deploy.marks()
+    const kinds = Object.keys(marks).map(function (k) { return marks[k] })
+    assert.ok(kinds.indexOf('fade') < 0, '原位置还留着浅色留痕')
+    assert.ok(kinds.indexOf('ghostBad') >= 0, '落点红框没了：' + kinds.join(','))
+  })
   check('拖拽中照常可渲染', function () { app.renderOnce() })
   app.touchEnd(badTarget.x + badTarget.w / 2, badTarget.y + badTarget.h / 2)
   check('松手就地落下（不弹回原位、不吸附去别处）', function () {
@@ -1144,6 +1159,52 @@ async function main() {
     app.touchMove(100, 400)
     app.touchEnd(100, 400)
     assert.strictEqual(app.scene.name, before, '拖动被误判为点击')
+  })
+
+  check('双击同一格 = 发射；单击、换格、隔太久都不算', function () {
+    const createBattle = require('../minigame/js/scenes/battle')
+    // 单独建一个场景实例（不是当前正在跑的那个），把 layout 和 onFire 换成探针。
+    // 不这么做的话，双击会把真实对局打完，后面几个用例全落在一个已结算的局上。
+    const b = createBattle(app)
+    b.myTurn = true
+    b.finished = false
+    b.firing = false
+    b.focus = 'foe'
+    b.selected = null
+    b._lastTap = null
+    let fires = 0
+    b.onFire = function () { fires += 1 }
+    b.layout = function () {}
+
+    b.onFoeCellTap(3, 4)
+    assert.strictEqual(fires, 0, '单击就开火了')
+    assert.deepStrictEqual(b.selected, { row: 3, col: 4 }, '单击没有选中')
+
+    b.onFoeCellTap(3, 4)
+    assert.strictEqual(fires, 1, '同一格双击没有开火')
+
+    // 双击后立刻再点一下：应该是「重新选一次」，不该变成第二炮
+    b.onFoeCellTap(3, 4)
+    assert.strictEqual(fires, 1, '连点三下打出了两炮')
+
+    // 换格：第一次只是改选，第二次才是双击
+    b.onFoeCellTap(5, 6)
+    assert.strictEqual(fires, 1, '点了别的格被当成双击')
+    b.onFoeCellTap(5, 6)
+    assert.strictEqual(fires, 2, '换格后双击没开火')
+
+    // 慢点两下同一格：真机上「看一眼再决定」很常见，不能算开火
+    b.onFoeCellTap(7, 8)
+    b._lastTap.at = Date.now() - 400
+    b.onFoeCellTap(7, 8)
+    assert.strictEqual(fires, 2, '隔了 400ms 还被当成双击')
+
+    // 上一炮还没回来时双击：不能再打一炮
+    b.firing = true
+    b._lastTap = null
+    b.onFoeCellTap(1, 1)
+    b.onFoeCellTap(1, 1)
+    assert.strictEqual(fires, 2, '上一炮没回来就又开了一炮')
   })
 
   check('返回大厅后状态被清空', function () {

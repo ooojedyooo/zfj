@@ -448,9 +448,14 @@ class Deploy extends Scene {
     const m = createMatrix(BOARD_SIZE, '')
     const a = this.audit()
 
+    // 正在拖的那架「拿在手上」，棋盘上不再算它、也不画它。
+    // 否则拖拽时原位置会杵着一个实色飞机，玩家看到的是「凭空多了一架」。
+    const dragIdx = this.drag ? this.drag.idx : -1
+
     // 一格落了几架（含机头）：机头格靠它换成「白底牌 + 红字」，见 board.js
     const stack = {}
     this.activePlaced().forEach(function (p) {
+      if (p.slot === dragIdx) return
       p.cells.forEach(function (c) {
         if (outsideCell(c)) return
         const k = c.row + ',' + c.col
@@ -460,6 +465,7 @@ class Deploy extends Scene {
 
     this.placed.forEach(function (p, i) {
       if (!isOut(p)) return     // 未加入 / 收起的飞机不画（它们在状态条里有自己的样子）
+      if (i === dragIdx) return // 拖拽中的那架只在手指位置画落点框，见 marks()
       // 出界 / 压到别人 → 这一架整体标「不合规」（画成半透明）。
       // 「整架」而不是「只标冲突的那几格」：玩家要判断的是「这一架能不能用」，
       // 逐格标会让人以为只有那几个格子有问题。
@@ -516,12 +522,12 @@ class Deploy extends Scene {
   }
 
   /**
-   * 叠加层：选中描边 + 拖拽落点预览 + 原位置留痕
+   * 叠加层：选中描边 + 拖拽落点预览
    *
-   * 拖拽时**不改动 cells**，而是用 marks 叠一层——
-   * 这样「原位置留痕 + 手指位置 + 松手会落到哪」能同屏看到。
+   * 拖拽时**不改动 cells**，而是用 marks 叠一层落点预览——
+   * 棋盘上那一架已由 cells() 跳过（等于被拿在手上），所以这里只画「松手会落到哪」。
    *
-   * 注意：这里不再有「自动吸附候选」（hint）。
+   * 注意：这里不再有「自动吸附候选」（hint），也没有「原位置留痕」。
    * 松手落在手指处，不管是蓝框还是红框 —— 玩家自己决定，系统不挪。
    */
   marks() {
@@ -539,10 +545,12 @@ class Deploy extends Scene {
       const p = this.placed[d.idx]
       if (!p) return out
 
-      // ① 原位置留痕（真的挪开了才留；原地按着不留）
-      if (d.row !== p.anchorRow || d.col !== p.anchorCol) put(p.cells, 'fade')
-
-      // ② 手指位置：能放=蓝框，放不下=红框。两种都是「松手落这儿」
+      // 只画落点：能放=蓝框，放不下=红框，两种都是「松手落这儿」。
+      //
+      // 这里原来还有一层「原位置留痕」（fade 浅色块），已经去掉 ——
+      // 和 cells() 里那份实色本体叠在一起，拖动时屏幕上同时出现三份飞机
+      // （实色本体 + 浅色留痕 + 落点框），谁在被拖反而看不清。
+      // 现在那架已经「拿在手上」，原位置就该是空的。
       put(getAbsoluteCells(p.planeId, d.row, d.col, d.rotation),
         d.valid ? 'ghostOk' : 'ghostBad')
       return out

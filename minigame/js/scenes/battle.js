@@ -21,6 +21,11 @@ RESULT_TEXT[RESULT.MISS] = '未击中'
 RESULT_TEXT[RESULT.HIT] = '击中！'
 RESULT_TEXT[RESULT.KILL] = '击毁！'
 
+// 双击同一格 = 直接发射，省掉「再伸手去点发射按钮」那一步。
+// 300ms 是移动端判定双击的常用窗口：再短（<200ms）真机上几乎打不出来，
+// 再长（>400ms）又会让「想换个目标、连点了两下」被误判成开火。
+const DOUBLE_TAP_MS = 300
+
 class Battle extends Scene {
   constructor(app) {
     super(app)
@@ -51,6 +56,7 @@ class Battle extends Scene {
     this.tickAcc = 0
     this.watcher = null
     this.emoteTimer = null
+    this._lastTap = null    // 上一次点中的格 {row, col, at}，用于识别双击发射
   }
 
   /* ---------------- 生命周期 ---------------- */
@@ -69,6 +75,7 @@ class Battle extends Scene {
     this.ticking = false
     this.tickAcc = 0
     this.selected = null
+    this._lastTap = null
     this.emoteBarOpen = false
     this.emoteBubble = null
     this.lastEmoteSeq = 0
@@ -388,9 +395,20 @@ class Battle extends Scene {
       const label = this.selected
         ? '横' + this.selected.col + '，竖' + this.selected.row
         : '请选择轰炸坐标'
-      draw.text(ctx, label, g.emojiBtn.x + g.emojiBtn.w + u(20), g.coordY, {
-        size: u(theme.size.body), color: this.selected ? c.text : c.textMuted
+      const labelX = g.emojiBtn.x + g.emojiBtn.w + u(20)
+      const labelSize = u(theme.size.body)
+      draw.text(ctx, label, labelX, g.coordY, {
+        size: labelSize, color: this.selected ? c.text : c.textMuted
       })
+
+      // 双击是快捷方式，但不能是没人知道的隐藏手势：选中后把这句写在坐标后面。
+      // 不这么做的话，玩家永远只会去点「发射」按钮，双击等于白做。
+      if (this.selected) {
+        const lw = draw.measure(ctx, label, labelSize)
+        draw.text(ctx, '· 双击发射', labelX + lw + u(12), g.coordY, {
+          size: u(theme.size.tiny), color: c.textMuted
+        })
+      }
 
       Button.render(ctx, Object.assign({}, g.fireBtn, {
         label: '发射', kind: 'primary', disabled: !this.selected
@@ -495,9 +513,27 @@ class Battle extends Scene {
   /* ---------------- 交互 ---------------- */
 
   onFoeCellTap(row, col) {
-    if (!this.myTurn || this.finished) return
+    // firing 期间不接受改选：这一炮还没回来就换目标，会出现
+    // 「选中已经变了、飞出去的还是旧格」的错位
+    if (!this.myTurn || this.finished || this.firing) return
+
+    // 双击同一格 = 发射。必须**同格**且够快：
+    // 先点 A 再点 B 是换目标，哪怕手速再快也不该开火。
+    const now = Date.now()
+    const prev = this._lastTap
+    const dbl = !!prev && prev.row === row && prev.col === col &&
+      (now - prev.at) <= DOUBLE_TAP_MS
+
     this.selected = { row: row, col: col }
     this.focus = 'foe'
+
+    if (dbl) {
+      this._lastTap = null   // 清掉，防连点三下打出两炮
+      this.onFire()
+      return
+    }
+
+    this._lastTap = { row: row, col: col, at: now }
     this.layout()
   }
 

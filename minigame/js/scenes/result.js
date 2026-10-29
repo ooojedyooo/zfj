@@ -25,6 +25,7 @@ class Result extends Scene {
   constructor(app) {
     super(app)
     this.planeCount = 1
+    this.foePlaneCount = 0
     this.rivalName = ''
   }
 
@@ -32,6 +33,7 @@ class Result extends Scene {
     const r = this.app.globalData.matchResult || {}
     const list = rivals.list()
     this.planeCount = r.planeCount || 1
+    this.foePlaneCount = r.foePlaneCount || 0
     this.win = !!r.win
     this.endType = r.endType || ''
     this.roomId = r.roomId || ''
@@ -116,9 +118,11 @@ class Result extends Scene {
     const card = g.card
     ui.card(ctx, L, card.x, card.y, card.w, card.h)
     const mySurvived = this.planeCount - this.foeDestroyed
-    const foeSurvived = this.planeCount - this.myDestroyed
+    // 双方架数可能不同（布阵时各自决定），对方总数拿不到时才退回自己的架数
+    const foeTotal = this.foePlaneCount || this.planeCount
+    const foeSurvived = Math.max(0, foeTotal - this.myDestroyed)
     ui.row(ctx, L, card.x + u(28), card.y + u(56), card.w - u(56), '我方剩余飞机', mySurvived + ' / ' + (mySurvived + this.foeDestroyed))
-    ui.row(ctx, L, card.x + u(28), card.y + u(124), card.w - u(56), '对方剩余飞机', foeSurvived + ' / ' + (foeSurvived + this.myDestroyed))
+    ui.row(ctx, L, card.x + u(28), card.y + u(124), card.w - u(56), '对方剩余飞机', foeSurvived + ' / ' + foeTotal)
     ui.row(ctx, L, card.x + u(28), card.y + u(192), card.w - u(56), '我方出手次数', String(this.myShots))
     ui.row(ctx, L, card.x + u(28), card.y + u(260), card.w - u(56), '对方出手次数', String(this.foeShots))
     draw.text(ctx, '房间号', card.x + u(28), card.y + u(316), { size: u(theme.size.small), color: c.textMuted })

@@ -150,7 +150,9 @@ function occupiedExcept(placed, skipIdx) {
   const out = []
   ;(placed || []).forEach(function (p, i) {
     if (i === skipIdx) return
-    if (p.off) return        // 收起的架不在场上，不占位
+    // 只有 state === 'out' 的飞机在场上。未加入（none）/ 收起（off）都不占位。
+    // 兼容旧的 off 布尔字段：老调用点仍可能传 { cells, off }。
+    if (p.state ? p.state !== 'out' : p.off) return
     for (let k = 0; k < p.cells.length; k++) out.push(p.cells[k])
   })
   return out

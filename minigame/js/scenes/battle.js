@@ -37,6 +37,7 @@ class Battle extends Scene {
     this.foeShots = 0
     this.myDestroyed = 0
     this.foeDestroyed = 0
+    this.foePlaneCount = 0
     this.turnSeconds = TIMEOUT.TURN
     this.emoteBarOpen = false
     this.emoteBubble = null
@@ -140,6 +141,13 @@ class Battle extends Scene {
   applyBattle(b) {
     if (!b || !this.myOpenid) return
     this.lastBattle = b
+
+    // 双方架数各自独立（布阵页点「+」添几架就是几架），所以对方那半边的
+    // 「已击毁 X / N」必须用对方的 N。新版本服务端在 battle.counts 里给；
+    // 老服务端（或离线引擎）没有这个字段时退回自己的架数 —— 离线对局双方同架数，
+    // 退回是准确的；老服务端上与旧行为一致，不会比原来更差。
+    const counts = b.counts || {}
+    this.foePlaneCount = counts[this.foeOpenid] || this.planeCount || 0
 
     const mine = (b.marks && b.marks[this.myOpenid]) || {}
     const incoming = (b.incoming && b.incoming[this.myOpenid]) || {}
@@ -324,7 +332,9 @@ class Battle extends Scene {
     this.drawArea(ctx, u, {
       block: g.foeBlock, board: g.foeBoard, title: '敌方海域 · 我方战况',
       focus: this.focus === 'foe', cells: this.foeCells(), selectable: this.myTurn && !this.finished,
-      disabled: this.disabledMap(), tag: '已击毁 ' + this.foeDestroyed + '/' + (this.planeCount || 1)
+      disabled: this.disabledMap(), tag: this.foePlaneCount
+        ? '已击毁 ' + this.foeDestroyed + '/' + this.foePlaneCount
+        : '已击毁 ' + this.foeDestroyed + ' 架'
     })
 
     // 出招区
@@ -540,7 +550,8 @@ class Battle extends Scene {
       foeShots: Object.keys(incoming).length,
       myDestroyed: stats.kill,
       foeDestroyed: stats.lost,
-      planeCount: this.planeCount || 1
+      planeCount: this.planeCount || 1,       // 我方架数
+      foePlaneCount: this.foePlaneCount || 0    // 对方架数（拿不到时为 0）
     }
     this.app.replace('result')
   }

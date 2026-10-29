@@ -5,12 +5,11 @@ const Scene = require('./base')
 const theme = require('../core/theme')
 const draw = require('../core/draw')
 const Button = require('../widgets/button')
-const planeIcon = require('../widgets/plane-icon')
 const ui = require('../widgets/ui')
 const dialog = require('../core/dialog')
 const share = require('../core/share')
 const api = require('../shared/services/cloudApi')
-const { MIN_PLANES, MAX_PLANES, TIMEOUT } = require('../shared/config/rules')
+const { MAX_PLANES, TIMEOUT } = require('../shared/config/rules')
 
 class Room extends Scene {
   constructor(app) {
@@ -20,7 +19,6 @@ class Room extends Scene {
     this.roomNo = ''
     this.password = String(Math.floor(1000 + Math.random() * 9000))
     this.usePassword = false
-    this.planeCount = MIN_PLANES
     this.joinRoomNo = ''
     this.joinPassword = ''
     this.playerCount = 0
@@ -109,8 +107,9 @@ class Room extends Scene {
     } else {
       this.zone(g.back.x, g.back.y, g.back.w, g.back.h, this.onCancel.bind(this))
 
+      // 卡片高度：join 两条输入框 / create 只有密码行 / random 只有一句说明
       const cardH = (this.mode === 'join') ? u(240)
-        : (this.mode === 'create' ? u(360) : u(258))
+        : (this.mode === 'create' ? u(232) : u(200))
       g.card = { x: x, y: y, w: w, h: cardH }
 
       if (this.mode === 'join') {
@@ -119,33 +118,21 @@ class Room extends Scene {
         this.zone(x, y + u(28), w, u(72), this.onEditRoomNo.bind(this))
         this.zone(x, y + u(128), w, u(72), this.onEditPassword.bind(this))
       } else {
-        g.rowPlane = { y: y + u(56) }
-
-        // 飞机数量：一排可点的飞机棋子，点亮几架就是几架（直接操作，比 +/− 快）
-        const slotsY = y + u(96)
-        const slotW = u(88)
-        const slotH = u(96)
-        const slotGap = u(12)
-        g.planeSlots = []
-        for (let i = 0; i < MAX_PLANES; i++) {
-          const sx = x + u(28) + i * (slotW + slotGap)
-          const rect = { x: sx, y: slotsY, w: slotW, h: slotH }
-          g.planeSlots.push(rect)
-          this.zone(sx, slotsY, slotW, slotH, this.onPickPlane.bind(this, i + 1))
-        }
-        g.slotHintX = x + u(28) + MAX_PLANES * slotW + (MAX_PLANES - 1) * slotGap + u(20)
-
-        const sw = u(96)
-        const swX = x + w - u(32) - sw
-        const pwdY = y + u(238)
-        g.rowPwd = { y: pwdY }
-        const swY = pwdY - u(30)
-        g.switch = { x: swX, y: swY, w: sw, h: u(56) }
-        this.zone(swX - u(20), swY - u(8), sw + u(40), u(72), this.onTogglePassword.bind(this))
-
-        if (this.usePassword) {
-          // 固定在密码行下方，不跟着 cardH 走——否则卡片一加高，密码文字就滑出卡片底
-          g.pwdBoxY = g.rowPwd.y + u(72)
+        // 合并之后这一页不再有「飞机数量」：架数在布阵页由棋盘上有几架决定。
+        // 在这儿先问「打 1 架还是 3 架」，玩家答不上来 —— 他还没看见棋盘。
+        g.hintY = y + cardH - u(34)
+        if (this.mode === 'create') {
+          const sw = u(96)
+          const swX = x + w - u(32) - sw
+          const pwdY = y + u(74)
+          g.rowPwd = { y: pwdY }
+          const swY = pwdY - u(30)
+          g.switch = { x: swX, y: swY, w: sw, h: u(56) }
+          this.zone(swX - u(20), swY - u(8), sw + u(40), u(72), this.onTogglePassword.bind(this))
+          if (this.usePassword) {
+            // 固定在密码行下方，不跟着 cardH 走 —— 否则卡片高度一变，密码文字就滑出卡片底
+            g.pwdBoxY = g.rowPwd.y + u(72)
+          }
         }
       }
 
@@ -226,38 +213,6 @@ class Room extends Scene {
         size: u(theme.size.tiny), color: c.textMuted
       })
     } else {
-      ui.row(ctx, L, card.x + u(28), g.rowPlane.y, card.w - u(56), '飞机数量', this.planeCount + ' 架')
-
-      // 点亮式选择器：亮几架 = 本局几架，点第 k 个直接设为 k
-      //
-      // 每个棋子用**它将来在棋盘上的身份色**（第 1 蓝 / 第 2 青 / 第 3 紫）。
-      // 这样从选数量那一刻起，颜色和编号的对应关系就已经建立了 ——
-      // 到了布阵页，玩家看到紫色那架不会觉得是系统随便上的色。
-      g.planeSlots.forEach(function (s, i) {
-        const on = i < this.planeCount
-        const pal = theme.color.planePalette[i % theme.color.planePalette.length]
-        draw.fillRect(ctx, s.x, s.y, s.w, s.h, on ? c.primaryLight : c.gray, u(theme.radius.md))
-        if (on) draw.strokeRect(ctx, s.x, s.y, s.w, s.h, pal.body, u(theme.radius.md), 1.5)
-        // 这里不印序号：槽位本身是横向排列的，「第几个」已经由位置表达了，
-        // 再叠数字会压住 66px 的飞机图标。序号只在棋盘机头格里出现。
-        const icon = u(66)
-        planeIcon.render(ctx, s.x + (s.w - icon) / 2, s.y + (s.h - icon) / 2, icon, {
-          rotation: 0,
-          on: on,
-          color: pal.body,
-          headColor: pal.head
-        })
-      }, this)
-
-      // 说清这一排是「定数量」，不是「往棋盘上放」——
-      // 房间页还没有棋盘，此刻点图标能做的只有一件事：决定本局打几架。
-      draw.text(ctx, '点亮几架 = 本局几架', g.slotHintX, g.planeSlots[0].y + u(38), {
-        size: u(theme.size.tiny), color: c.textMuted
-      })
-      draw.text(ctx, '进棋盘后可收起 / 放回', g.slotHintX, g.planeSlots[0].y + u(74), {
-        size: u(theme.size.tiny), color: c.textMuted
-      })
-
       if (this.mode === 'create') {
         ui.row(ctx, L, card.x + u(28), g.rowPwd.y, card.w - u(56), '设置密码', '')
         const s = g.switch
@@ -270,10 +225,14 @@ class Room extends Scene {
             size: u(theme.size.body), color: c.primaryDark, weight: 500
           })
         }
+        // 架数去哪儿了：明说，不然玩家会找「飞机数量」那一行
+        draw.text(ctx, '下一局打几架，在布阵页点「+」添 · 添几架就是几架',
+          card.x + u(28), g.hintY, { size: u(theme.size.tiny), color: c.textMuted })
       } else {
-        draw.text(ctx, '将为你匹配一位在线玩家，也可等待其他玩家加入', card.x + u(28), card.y + card.h - u(30), {
-          size: u(theme.size.tiny), color: c.textMuted
-        })
+        draw.text(ctx, '将为你匹配一位在线玩家，也可等待其他玩家加入',
+          card.x + u(28), g.hintY, { size: u(theme.size.tiny), color: c.textMuted })
+        draw.text(ctx, '打几架在布阵页决定 · 添几架就是几架',
+          card.x + u(28), g.hintY + u(32), { size: u(theme.size.tiny), color: c.textMuted })
       }
     }
 
@@ -295,19 +254,6 @@ class Room extends Scene {
   }
 
   /* ---------------- 交互 ---------------- */
-
-  /**
-   * 点第 n 个飞机棋子 → 数量设为 n（点亮式选择，一步到位；不需要 +/− 反复点）
-   *
-   * 点到「当前最亮的那一个」= 取消它（3 → 2）。点亮式控件的通用直觉是
-   * 「再点一下熄灭」，如果点第 3 个永远只得到 3，玩家会觉得这一下白点了。
-   * 最少保留 1 架（0 架没法开局）。
-   */
-  onPickPlane(n) {
-    if (this.loading || this.mode === 'waiting') return
-    if (n < MIN_PLANES || n > MAX_PLANES) return
-    this.planeCount = (n === this.planeCount && n > MIN_PLANES) ? n - 1 : n
-  }
 
   onTogglePassword() {
     this.usePassword = !this.usePassword
@@ -340,7 +286,8 @@ class Room extends Scene {
     this.layout()
     app.busy('创建中…')
     api.createRoom({
-      planeCount: this.planeCount,
+      // 架数改由布阵页决定，这里只报「本局上限」；服务端按 1~3 架校验实际布阵
+      planeCount: MAX_PLANES,
       password: this.usePassword ? this.password : ''
     }).then(function (data) {
       app.hideBusy()
@@ -385,7 +332,7 @@ class Room extends Scene {
     this.loading = true
     this.layout()
     app.busy('匹配中…')
-    api.matchRoom({ planeCount: this.planeCount }).then(function (data) {
+    api.matchRoom({ planeCount: MAX_PLANES }).then(function (data) {
       app.hideBusy()
       self.loading = false
       self.enterWaiting(data)

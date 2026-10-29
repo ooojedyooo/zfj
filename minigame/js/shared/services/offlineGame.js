@@ -198,7 +198,10 @@ async function deploy(params) {
     cells: getAbsoluteCells(p.planeId || 'standard', p.anchorRow, p.anchorCol, p.rotation || 0)
   }))
 
-  game = new LocalGame({ planeCount: room.planeCount })
+  // AI 用**和我一样的架数**布阵：本地试玩要模拟一场公平对局。
+  // 架数已改由布阵页决定（点「+」添几架就打几架），房间上的 planeCount
+  // 只是「本局上限」，不能再拿它当实际架数用。
+  game = new LocalGame({ planeCount: planes.length })
   game.deploy(planes)
   game.deployFoe()
   game.seq = 0

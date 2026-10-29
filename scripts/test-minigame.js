@@ -89,7 +89,7 @@ const Board = require('../minigame/js/widgets/board')
 const theme = require('../minigame/js/core/theme')
 const planeFit = require('../minigame/js/core/fit')
 const { getAbsoluteCells } = require('../minigame/js/shared/utils/plane')
-const { BOARD_SIZE, RESULT, END_TYPE } = require('../minigame/js/shared/config/rules')
+const { BOARD_SIZE, MAX_PLANES, RESULT, END_TYPE } = require('../minigame/js/shared/config/rules')
 
 /* ================= 断言脚手架 ================= */
 
@@ -245,31 +245,20 @@ async function main() {
   const room = app.scene
   check('房间默认 create 模式', function () { assert.strictEqual(room.mode, 'create') })
   check('房间场景可渲染', function () { app.renderOnce() })
-  check('房间页飞机数量用点亮式棋子选择', function () {
-    assert.ok(room.geo.planeSlots && room.geo.planeSlots.length === 3,
-      '未注册 3 个飞机棋子，实际 ' + (room.geo.planeSlots || []).length)
-    assert.strictEqual(room.planeCount, 1, '默认应为 1 架')
-    room.geo.planeSlots.forEach(function (s) {
-      assert.ok(s.x >= 0 && s.x + s.w <= 375, '棋子槽横向出屏')
-    })
+  check('房间页不再出现「飞机数量」：架数改由布阵页决定', function () {
+    assert.ok(!room.geo.planeSlots, '房间页还留着数量选择器')
+    assert.strictEqual(room.planeCount, undefined, '房间页还存着 planeCount')
   })
-  check('点第 N 个棋子 = 设 N 架（一步到位）', function () {
-    tapRect(room.geo.planeSlots[2])
-    assert.strictEqual(room.planeCount, 3, '点第 3 个应为 3 架')
-    tapRect(room.geo.planeSlots[0])
-    assert.strictEqual(room.planeCount, 1, '点第 1 个应为 1 架')
+  check('卡片明显矮了（那一排棋子已经不占位），但仍留了一行说明架数去哪了', function () {
+    const card = room.geo.card
+    assert.ok(card.h <= 240, '卡片没随着删掉棋子变矮：' + card.h)
+    assert.ok(room.geo.hintY > card.y && room.geo.hintY < card.y + card.h,
+      '说明文字没落在卡片里')
   })
-  check('点当前最亮的那一个 = 取消它（3 → 2），最少保留 1 架', function () {
-    tapRect(room.geo.planeSlots[2])
-    assert.strictEqual(room.planeCount, 3)
-    tapRect(room.geo.planeSlots[2])          // 再点第 3 个 → 熄灭
-    assert.strictEqual(room.planeCount, 2, '再点一次没有取消，这一下白点了')
-    tapRect(room.geo.planeSlots[1])          // 2 → 1
-    assert.strictEqual(room.planeCount, 1)
-    tapRect(room.geo.planeSlots[0])          // 已经是 1，不能再减到 0
-    assert.strictEqual(room.planeCount, 1, '被减到 0 了，没法开局')
+  check('本局上限仍是 3 架', function () {
+    assert.strictEqual(MAX_PLANES, 3)
   })
-  check('点亮态可渲染', function () { app.renderOnce() })
+  app.renderOnce()
 
   /* ---------- 4. 创建房间 → 等待 → 对手就位 ---------- */
   section('[4] 创建房间 → 对手加入 → 布阵')
@@ -287,10 +276,26 @@ async function main() {
   check('对手加入后自动进入布阵', function () { assert.strictEqual(app.scene.name, 'deploy') })
 
   const deploy = app.scene
-  check('布阵飞机数量取自房间设置', function () {
-    assert.ok(deploy.planeCount >= 1 && deploy.planeCount <= 3, String(deploy.planeCount))
+  check('布阵页恒有三个名额（本局上限 3 架，不再由房间决定）', function () {
+    assert.strictEqual(deploy.placed.length, MAX_PLANES, '名额数 ' + deploy.placed.length)
+    assert.strictEqual(deploy.geo.statusSlots.length, MAX_PLANES, '状态条槽位数不对')
   })
-  check('布阵初始未放置飞机', function () { assert.strictEqual(deploy.placed.length, 0) })
+  check('初始三个名额都是「未加入」，棋盘上一架也没有', function () {
+    assert.strictEqual(deploy.activeCount(), 0)
+    assert.strictEqual(deploy.noneCount(), MAX_PLANES)
+    const flat = deploy.cells().reduce(function (a, r) { return a.concat(r) }, [])
+    assert.ok(!flat.some(function (v) { return v && (v.s === 'plane' || v.s === 'head') }),
+      '棋盘上竟然画了飞机')
+  })
+
+  // 极端夹具用：直接造一架在场的飞机（state 必须是 out 才算在场上）
+  const mkOut = function (row, col, rot, slot) {
+    return {
+      slot: slot, planeId: 'standard', state: 'out',
+      anchorRow: row, anchorCol: col, rotation: rot,
+      cells: getAbsoluteCells('standard', row, col, rot)
+    }
+  }
 
   const board = deploy.geo.board
   check('棋盘完整落在屏内', function () {
@@ -320,14 +325,10 @@ async function main() {
 
   /* ---------- 布阵：放置 ---------- */
 
-  // 后面要连放 3 架，先把数量调上去（真实流程由房间页点亮式选择器决定）
-  deploy.planeCount = 3
-  deploy.layout()
-
   // ① 合法位置：落点 = 机头
   const anchor = Board.cellRect(board, 5, 5)
   tapRect(anchor)
-  check('点空白格成功放置', function () { assert.strictEqual(deploy.placed.length, 1) })
+  check('点空白格成功放置', function () { assert.strictEqual(deploy.activeCount(), 1) })
   check('落点即机头', function () {
     const p = deploy.placed[0]
     assert.strictEqual(p.anchorRow, 5)
@@ -352,7 +353,7 @@ async function main() {
   deploy.rotation = 0                    // 夹具：机头朝上、机身向下，第 8 行必然探出棋盘
   tapRect(Board.cellRect(board, 8, 3))
   check('越界落点直接放下，机头仍在点的那一格', function () {
-    assert.strictEqual(deploy.placed.length, 1, '越界落点没放下')
+    assert.strictEqual(deploy.activeCount(), 1, '越界落点没放下')
     const p = deploy.placed[0]
     assert.strictEqual(p.anchorRow, 8, '机头被系统挪走了：' + p.anchorRow)
     assert.strictEqual(p.anchorCol, 3, '机头被系统挪走了：' + p.anchorCol)
@@ -384,7 +385,7 @@ async function main() {
   const firstCells = JSON.stringify(deploy.placed[0].cells)
   tapRect(Board.cellRect(board, 3, 5))   // B 机头 (3,5)，机身必然压到 A 的 5~6 行
   check('重叠落点也直接放下，且不动已放好的那架', function () {
-    assert.strictEqual(deploy.placed.length, 2, '重叠落点没放下：' + deploy.placed.length)
+    assert.strictEqual(deploy.activeCount(), 2, '重叠落点没放下：' + deploy.activeCount())
     assert.strictEqual(JSON.stringify(deploy.placed[0].cells), firstCells, '第 1 架被挪动了')
   })
   check('重叠被审计出来，两架都算不合规', function () {
@@ -432,12 +433,12 @@ async function main() {
   // ④ 清空重放一架，专测选中与旋转
   tapRect(deploy.geo.opRects[2])
   tapRect(Board.cellRect(board, 5, 5))
-  check('清空并重放后只有 1 架', function () { assert.strictEqual(deploy.placed.length, 1) })
+  check('清空并重放后只有 1 架', function () { assert.strictEqual(deploy.activeCount(), 1) })
 
   // ⑤ 点机头 → 选中（不再「点一下就删」，误触代价太高）
   tapRect(anchor)
   check('点机头选中该架（不删除）', function () {
-    assert.strictEqual(deploy.placed.length, 1, '点机头把飞机删掉了')
+    assert.strictEqual(deploy.activeCount(), 1, '点机头把飞机删掉了')
     assert.strictEqual(deploy.selected, 0, '未选中，selected=' + deploy.selected)
   })
   check('选中态给整架 10 格打描边标记', function () {
@@ -467,7 +468,7 @@ async function main() {
   tapRect(Board.cellRect(board, 1, 1))
   check('选中态下点空白只退出选中，不放新飞机', function () {
     assert.strictEqual(deploy.selected, -1, '没退出选中')
-    assert.strictEqual(deploy.placed.length, 1, '误放了新飞机')
+    assert.strictEqual(deploy.activeCount(), 1, '误放了新飞机')
   })
 
   // ⑧ 按住机头拖到合法位置 → 整架跟着走
@@ -516,7 +517,7 @@ async function main() {
     assert.strictEqual(deploy.drag, null)
     assert.strictEqual(p.anchorRow, 9, '行没落到手指处：' + p.anchorRow)
     assert.strictEqual(p.anchorCol, curHead.col, '列没落到手指处：' + p.anchorCol)
-    assert.strictEqual(deploy.placed.length, 1)
+    assert.strictEqual(deploy.activeCount(), 1)
   })
   check('落下后这架被标红，就绪会被它拦住', function () {
     const a = deploy.audit()
@@ -524,7 +525,7 @@ async function main() {
     assert.ok(a.items[0].outside > 0, '没有数出界格数')
   })
   check('机头始终留在棋盘内（它是抓手，也是旋转轴）', function () {
-    deploy.placed.forEach(function (p) {
+    deploy.activePlaced().forEach(function (p) {
       assert.ok(p.anchorRow >= 1 && p.anchorRow <= BOARD_SIZE, '机头行出界了：' + p.anchorRow)
       assert.ok(p.anchorCol >= 1 && p.anchorCol <= BOARD_SIZE, '机头列出界了：' + p.anchorCol)
     })
@@ -560,7 +561,7 @@ async function main() {
   })[0]
   tapRect(Board.cellRect(board, bodyCell.row, bodyCell.col))
   check('点机体也能选中该架', function () {
-    assert.strictEqual(deploy.placed.length, 1)
+    assert.strictEqual(deploy.activeCount(), 1)
     assert.strictEqual(deploy.selected, 0, '未选中，selected=' + deploy.selected)
   })
   check('选中后其余飞机降饱和，焦点那架不降', function () {
@@ -576,10 +577,11 @@ async function main() {
     col: deploy.placed[0].anchorCol,
     rot: deploy.placed[0].rotation
   }
-  check('「收起这架」只打标记，不真删', function () {
+  check('「收起这架」只改状态，数组不塌（下标 ≡ 编号）', function () {
     deploy.onSecondAction()
-    assert.strictEqual(deploy.placed.length, 1, '数组被 splice 了，编号会塌')
-    assert.strictEqual(deploy.placed[0].off, true, '没有标记为收起')
+    assert.strictEqual(deploy.placed.length, MAX_PLANES, '数组长度变了，编号会塌')
+    assert.strictEqual(deploy.placed[0].state, 'off', '没有标记为收起')
+    assert.strictEqual(deploy.activeCount(), 0)
     assert.strictEqual(deploy.selected, -1)
   })
   check('收起的飞机：棋盘上不画、不算违规、不占位', function () {
@@ -599,34 +601,55 @@ async function main() {
   check('点状态条的虚线槽 → 放回原位，朝向不变', function () {
     deploy.onPickSlot(0)
     const p = deploy.placed[0]
-    assert.strictEqual(p.off, false, '没有展开')
+    assert.strictEqual(p.state, 'out', '没有展开')
     assert.strictEqual(p.anchorRow, stashedPos.row, '回来的位置变了')
     assert.strictEqual(p.anchorCol, stashedPos.col, '回来的位置变了')
     assert.strictEqual(p.rotation, stashedPos.rot, '回来的朝向变了')
     assert.strictEqual(deploy.selected, 0, '展开后没有顺手选中它')
   })
-  check('还有收起没放回时，就绪被拦住（且不是「违规」口吻）', function () {
-    deploy.placed[0].off = true
+  // 合并数量之后，收起就等于「这一局不用这架」——
+  // 所以收起**不该**再拦着就绪，否则玩家没法只打 1 架。
+  // 注意：这里不能真的提交 —— 离线引擎会在几百毫秒后把场景切到 battle，
+  // 后面所有用例都会在一个已经被换掉的场景上跑。用 spy 顶掉 submit。
+  const spySubmit = function (fn) {
+    const orig = deploy.submit
+    let called = false
+    deploy.submit = function () { called = true }
+    try { fn() } finally { deploy.submit = orig }
+    return called
+  }
+
+  check('收起 1 架、场上还剩 1 架 → 就绪不再被拦（架数由玩家自己定）', function () {
+    // 用「+」自动落位，保证位置本身合规，才能证明拦住它的只可能是「收起」
+    deploy.onClear()
+    deploy.onPickSlot(0)
+    deploy.onPickSlot(1)
+    deploy.selected = 0
+    deploy.onStashSelected()
+    deploy.layout()
+    assert.strictEqual(deploy.activeCount(), 1, '夹具没摆好')
+    assert.strictEqual(deploy.offCount(), 1)
     MODAL.last = null
     const before = MODAL.count
-    deploy.onReady()
-    assert.strictEqual(MODAL.count, before + 1, '没有弹窗拦住就绪')
-    const txt = (MODAL.last.title || '') + ' ' + (MODAL.last.content || '')
-    assert.ok(txt.indexOf('没放上去') >= 0, '提示没有说清是「还没放」：' + txt)
-    assert.strictEqual(deploy.readying, false, '却提交了')
-    assert.strictEqual(deploy.waiting, false, '却进了等待对手')
-    deploy.placed[0].off = false
+    const called = spySubmit(function () { deploy.onReady() })
+    assert.strictEqual(MODAL.count, before, '竟然弹窗拦住了：' + (MODAL.last && MODAL.last.title))
+    assert.ok(called, '收起 1 架就没法开局了')
+    assert.strictEqual(deploy.readying, false, 'spy 没接到：真的提交了')
+  })
+  check('一架都不放时，就绪不提交也不弹窗（只是还没开始摆）', function () {
+    deploy.onClear()
+    MODAL.last = null
+    const before = MODAL.count
+    const called = spySubmit(function () { deploy.onReady() })
+    assert.strictEqual(MODAL.count, before, '0 架时弹了弹窗')
+    assert.ok(!called, '0 架竟然提交了')
+    deploy.placed[0] = mkOut(5, 5, 0, 0)
+    deploy.layout()
   })
 
   // 极端情况：三架完全重合。真实操作里「连续拖到同一处」就能达成，不能崩
   check('三架重合时三架都算违规，且能在重叠格上轮换选中', function () {
-    deploy.placed = []
-    for (let k = 0; k < 3; k++) {
-      deploy.placed.push({
-        planeId: 'standard', anchorRow: 5, anchorCol: 5, rotation: 0,
-        cells: getAbsoluteCells('standard', 5, 5, 0)
-      })
-    }
+    deploy.placed = [mkOut(5, 5, 0, 0), mkOut(5, 5, 0, 1), mkOut(5, 5, 0, 2)]
     const a = deploy.audit()
     assert.strictEqual(a.items.length, 3, '违规架数 ' + a.items.length)
     a.items.forEach(function (it) { assert.strictEqual(it.overlap, true) })
@@ -648,15 +671,8 @@ async function main() {
   // 画面上唯一的差别就是机头牌里的那个数字 —— 所以点一下必须让它变，
   // 而且不能顺手旋转（重叠态转完可能还叠着，且会和「点一下切换」抢同一个手势）
   check('机头重叠时点机头 = 切换选择不旋转，机头牌换成选中那架的编号', function () {
-    deploy.placed = []
-    deploy.placed.push({
-      planeId: 'standard', anchorRow: 5, anchorCol: 5, rotation: 0,
-      cells: getAbsoluteCells('standard', 5, 5, 0)
-    })
-    deploy.placed.push({
-      planeId: 'standard', anchorRow: 5, anchorCol: 5, rotation: 1,
-      cells: getAbsoluteCells('standard', 5, 5, 1)
-    })
+    deploy.placed = [mkOut(5, 5, 0, 0), mkOut(5, 5, 1, 1),
+      { slot: 2, planeId: 'standard', state: 'none', anchorRow: 0, anchorCol: 0, rotation: 0, cells: [] }]
     deploy.selected = -1
     app.renderOnce()
 
@@ -686,7 +702,7 @@ async function main() {
       '抓到了第 ' + (deploy._press.idx + 1) + ' 架，不是选中的第 1 架')
     deploy._press = null
     deploy.selected = -1
-    deploy.placed = []
+    deploy.onClear()
     app.renderOnce()
   })
 
@@ -714,7 +730,7 @@ async function main() {
   check('「自动整理」把违规飞机挪到最近的合法位置', function () {
     const a = deploy.audit()
     assert.strictEqual(a.ok, true, '整理后仍不合规：' + JSON.stringify(a.items))
-    assert.strictEqual(deploy.placed.length, 2, '整理过程中丢了飞机')
+    assert.strictEqual(deploy.activeCount(), 2, '整理过程中丢了飞机')
   })
   check('整理后互不重叠、没有出界格', function () {
     const key = {}
@@ -732,22 +748,68 @@ async function main() {
 
   // ⑭ 清空 / 随机布阵
   tapRect(deploy.geo.opRects[2])
-  check('「清空」生效', function () { assert.strictEqual(deploy.placed.length, 0) })
+  check('「清空」生效：三个名额都回到「未加入」', function () {
+    assert.strictEqual(deploy.activeCount(), 0)
+    assert.strictEqual(deploy.noneCount(), MAX_PLANES)
+    assert.strictEqual(deploy.offCount(), 0, '清空应该连收起的位置一起清掉')
+  })
 
-  // 后面的战斗段落依赖「1 架、一炮定胜负」，先恢复成 1 架
-  deploy.planeCount = 1
-  deploy.layout()
-  tapRect(deploy.geo.opRects[1])
-  check('「随机布阵」按数量放满', function () {
-    assert.strictEqual(deploy.placed.length, 1, '实际 ' + deploy.placed.length)
+  // ⑮ 随机布阵：只重排当前在场上那几架，不偷偷改架数；
+  //     一架都没有时才补满（否则点了一下什么也没发生，玩家会以为按钮坏了）
+  check('一架都没有时，随机布阵补满 3 架', function () {
+    tapRect(deploy.geo.opRects[1])
+    assert.strictEqual(deploy.activeCount(), MAX_PLANES, '实际 ' + deploy.activeCount())
+    const a = deploy.audit()
+    assert.strictEqual(a.ok, true, '随机布阵产生了违规：' + JSON.stringify(a.items))
   })
   check('随机布阵后机头仍带身份下标', function () {
     const flat = deploy.cells().reduce(function (a, r) { return a.concat(r) }, [])
     assert.ok(flat.some(function (v) { return v && v.p === 0 && v.s === 'head' }), '没有 p=0 的机头')
+    assert.ok(flat.some(function (v) { return v && v.p === 2 && v.s === 'head' }), '没有 p=2 的机头')
   })
-  check('随机布阵的结果一定合规（不会自己把自己拦在门外）', function () {
-    const a = deploy.audit()
-    assert.strictEqual(a.ok, true, '随机布阵产生了违规：' + JSON.stringify(a.items))
+  check('已有 1 架时，随机布阵只重排这 1 架（架数不被偷偷改掉）', function () {
+    deploy.onClear()
+    tapRect(Board.cellRect(board, 5, 5))
+    assert.strictEqual(deploy.activeCount(), 1)
+    tapRect(deploy.geo.opRects[1])
+    assert.strictEqual(deploy.activeCount(), 1, '架数被改成了 ' + deploy.activeCount())
+    assert.strictEqual(deploy.audit().ok, true, '重排后不合规')
+  })
+
+  // ⑯ 点状态条的「+」= 往棋盘上添一架（这就是「合并数量」后的添加入口）
+  check('点状态条的「+」添一架，落在合法位置并被选中', function () {
+    deploy.onClear()
+    tapRect(deploy.geo.statusSlots[1])          // 点第 2 个名额
+    assert.strictEqual(deploy.activeCount(), 1, '没添上')
+    assert.strictEqual(deploy.placed[1].state, 'out', '添到了别的名额上')
+    assert.strictEqual(deploy.selected, 1, '添完没有选中它，玩家还得自己找')
+    assert.strictEqual(deploy.audit().ok, true, '自动落点竟然不合法')
+    const p = deploy.placed[1]
+    assert.ok(p.cells.length === 10, '格数不是 10')
+    p.cells.forEach(function (c) {
+      assert.ok(c.row >= 1 && c.row <= BOARD_SIZE && c.col >= 1 && c.col <= BOARD_SIZE,
+        '自动落点探出棋盘：' + c.row + ',' + c.col)
+    })
+  })
+  check('再点一次「+」添第二架，位置不跟第一架重叠', function () {
+    tapRect(deploy.geo.statusSlots[0])
+    assert.strictEqual(deploy.activeCount(), 2)
+    assert.strictEqual(deploy.audit().ok, true, '两架自动落点重叠了')
+  })
+  check('点「+」添到上限后再点第 4 个位置——没有第 4 个（上限 3 架）', function () {
+    tapRect(deploy.geo.statusSlots[2])
+    assert.strictEqual(deploy.activeCount(), MAX_PLANES)
+    assert.strictEqual(deploy.noneCount(), 0)
+    assert.strictEqual(deploy.audit().ok, true, '三架自动落点互相压到了')
+  })
+
+  // 战斗段落依赖「1 架、一炮定胜负」：清空后只放 1 架，验证「只打 1 架」这条新规则
+  deploy.onClear()
+  deploy.rotation = 0
+  tapRect(Board.cellRect(board, 5, 5))
+  check('只放 1 架也能就绪（旧版必须放满 N 架）', function () {
+    assert.strictEqual(deploy.activeCount(), 1)
+    assert.strictEqual(deploy.audit().ok, true)
   })
 
   // 就绪

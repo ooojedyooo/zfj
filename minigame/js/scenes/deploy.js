@@ -25,13 +25,28 @@
 //      而不是像以前那样拖一下就偷偷改朝向
 //
 // ============================================================================
+// 【本页同时决定「打几架」】
+//
+// 房间页不再有「飞机数量」这一项 —— 玩家在那儿没法判断 1 架和 3 架打起来
+// 有什么差别，只能凭数字瞎选，进了棋盘还得再核对一次「我选的是 3 架吧」。
+// 数量现在是**棋盘上真的有几架**，只有一处说法。
+//
+// 所以状态条的三个槽各代表一架的名额，三种状态：
+//   未加入（none）→ 灰底 + 「+」：点它 = 往棋盘上添一架
+//   收起  （off） → 虚线框     ：点它 = 回到收起前的位置和朝向
+//   在场上（out） → 身份色     ：点它 = 选中这一架
+//
+// 「添一架」落在哪由系统给（离中心最近的空位），因为玩家此刻还没表达位置意图；
+// 落好之后立刻选中，按住机头就能拖走。**谁做决定**这条线没破：
+// 系统只在这个动作里替玩家选了初始位置，之后的每次移动都是玩家自己拖的。
+// ============================================================================
 // 【交互契约】不用按钮中转，手指直接作用在飞机上（直接操作）
-//   点空白格  → 放一架（落点 = 机头）；若已有选中，先退出选中，不误放
+//   点空白格  → 添一架（落点 = 机头）；若已有选中，先退出选中，不误放
 //   点机头    → 选中这一架；已选中时再点一次 = 以机头为轴旋转 90°
 //   点机体    → 同样选中（命中判定放宽，手指比格子粗）
 //             → 重叠处再点一下 = 在叠着的几架之间轮换选中（见下「重叠」）
 //   按住机头拖 → 整架跟着走，松手就地落下（不问合不合法）
-//   点状态条棋子 → 直接选中那一架
+//   点状态条棋子 → 未加入=添一架 / 收起=回原位 / 在场上=选中
 //
 // 为什么「先选中再旋转」而不是「点一下直接转」：
 //   拖拽的起手式就是按住机头，手指自然会先位移 3~8px。
@@ -68,6 +83,37 @@ const { BOARD_SIZE, MIN_PLANES, MAX_PLANES, TIMEOUT } = require('../shared/confi
 
 const ROTATION_LABEL = ['↑', '→', '↓', '←']
 
+/** 槽位状态：这个名额上的飞机现在是「还没加入 / 收起来了 / 在场上」 */
+const SLOT = { NONE: 'none', OFF: 'off', OUT: 'out' }
+
+/** 在场上的那一架（唯一会被画到棋盘、参与审计、参与提交的状态） */
+function isOut(p) {
+  return !!(p && p.state === SLOT.OUT)
+}
+
+/**
+ * 三个名额，长度**恒等于 MAX_PLANES**。
+ *
+ * 不这么做的代价是：数组下标会被当成编号，删掉中间一架后面全部塌位，
+ * 身份色和机头序号跟着变（紫变青、3 变 2），玩家会以为系统换了他的飞机。
+ * 固定长度之后，下标 ≡ 槽位 ≡ 编号，三件事永远是同一件。
+ */
+function createSlots() {
+  const out = []
+  for (let i = 0; i < MAX_PLANES; i++) {
+    out.push({
+      slot: i,
+      planeId: 'standard',
+      state: SLOT.NONE,
+      anchorRow: 0,
+      anchorCol: 0,
+      rotation: 0,
+      cells: []
+    })
+  }
+  return out
+}
+
 /** 某个格位是否在棋盘之外（飞机允许部分探出棋盘，但机头必须在内） */
 function outsideCell(c) {
   return c.row < 1 || c.row > BOARD_SIZE || c.col < 1 || c.col > BOARD_SIZE
@@ -85,8 +131,7 @@ function headCellOf(p) {
 class Deploy extends Scene {
   constructor(app) {
     super(app)
-    this.placed = []
-    this.planeCount = MIN_PLANES
+    this.placed = createSlots()   // 三个名额固定存在，state 说明各自处境
     this.rotation = 0
     this.selected = -1      // 选中的飞机下标（-1 = 未选中）
     this.drag = null        // 拖拽中：{ idx, row, col, rotation, valid, reason, outside }
@@ -103,8 +148,7 @@ class Deploy extends Scene {
   onEnter() {
     const match = this.app.globalData.match || {}
     this.roomId = match.roomId || ''
-    this.planeCount = Math.min(MAX_PLANES, Math.max(MIN_PLANES, match.planeCount || MIN_PLANES))
-    this.placed = []
+    this.placed = createSlots()
     this.rotation = 0
     this.selected = -1
     this.drag = null
@@ -149,8 +193,8 @@ class Deploy extends Scene {
     const overlap = {}
 
     for (let i = 0; i < placed.length; i++) {
-      // 收起的飞机不在场上，不参与出界 / 重叠判定
-      if (placed[i].off) { outside.push(0); continue }
+      // 未加入 / 收起的飞机不在场上，不参与出界 / 重叠判定
+      if (!isOut(placed[i])) { outside.push(0); continue }
       const cells = placed[i].cells
       let out = 0
       for (let k = 0; k < cells.length; k++) {
@@ -216,33 +260,54 @@ class Deploy extends Scene {
   /* ---------------- 收起（临时离场） ----------------
    *
    * 「移除这架」原本是把数组元素 splice 掉 —— 位置和朝向一起没了，
-   * 再放要重新拖一次。但玩家点它的心态几乎都不是「这一局不要这架了」
-   * （本局几架是房间页定死的，布阵时不能改），而是
-   * 「先把它拿开，腾地方摆别的，一会儿再放回来」。
+   * 再放要重新拖一次。但玩家点它的心态几乎都不是「这一局不要这架了」，
+   * 而是「先把它拿开，腾地方摆别的，一会儿再放回来」。
    *
-   * 所以改成**收起**：`off = true` 表示暂时不在场上，
+   * 所以改成**收起**：`state = 'off'` 表示暂时不在场上，
    *   位置 / 朝向 / 编号 / 身份色全部原样留着，再点一下就从原位展开。
    *
-   * 用标记而不是从数组里删，是为了让**下标永远等于编号**。
+   * 用状态标记而不是从数组里删，是为了让**下标永远等于编号**。
    * 一旦 splice，第 3 架会塌成第 2 架，颜色和机头序号跟着变 ——
    * 玩家会以为系统把他的飞机换了。
+   *
+   * 合并了数量选择之后，「收起」还多了一层含义：**收起来就等于本局不用它**。
+   * 所以就绪时不再拦「还有架没放」（那不是错误，是玩家的选择）。
    */
 
-  /** 真正在场上（未被收起）的飞机 */
+  /** 真正在场上（state === 'out'）的飞机 —— 架数、审计、提交都只认它 */
   activePlaced() {
-    return this.placed.filter(function (p) { return !p.off })
+    return this.placed.filter(isOut)
   }
 
+  /** 在场上几架 = 本局打几架 */
+  activeCount() {
+    return this.activePlaced().length
+  }
+
+  /** 收起着、但位置还记着的架数 */
   offCount() {
     let n = 0
-    for (let i = 0; i < this.placed.length; i++) if (this.placed[i].off) n++
+    for (let i = 0; i < this.placed.length; i++) {
+      if (this.placed[i].state === SLOT.OFF) n++
+    }
     return n
   }
 
-  /** 第 idx 架是否收起着 */
-  isOff(idx) {
-    const p = this.placed[idx]
-    return !!(p && p.off)
+  /** 从未加入过的名额数 */
+  noneCount() {
+    let n = 0
+    for (let i = 0; i < this.placed.length; i++) {
+      if (this.placed[i].state === SLOT.NONE) n++
+    }
+    return n
+  }
+
+  /** 第一个未加入的名额（-1 = 三个名额都用过了） */
+  firstFreeSlot() {
+    for (let i = 0; i < this.placed.length; i++) {
+      if (this.placed[i].state === SLOT.NONE) return i
+    }
+    return -1
   }
 
   /* ---------------- 布局 ---------------- */
@@ -276,11 +341,11 @@ class Deploy extends Scene {
     g.statusY = g.board.y + size + pad * 2 + u(20)
     g.statusH = statusH
 
-    // 状态条里的飞机棋子（本局几架就摆几个，点一下选中那一架）
+    // 状态条里的飞机棋子：**恒为 3 个名额**（本局上限），点它加 / 收起 / 选中
     const slotSize = u(72)
     const slotGap = u(10)
     g.statusSlots = []
-    for (let i = 0; i < this.planeCount; i++) {
+    for (let i = 0; i < MAX_PLANES; i++) {
       g.statusSlots.push({
         x: x + u(24) + i * (slotSize + slotGap),
         y: g.statusY + u(16),
@@ -288,11 +353,11 @@ class Deploy extends Scene {
         h: slotSize
       })
     }
-    g.statusTextX = x + u(24) + this.planeCount * slotSize +
-      (this.planeCount - 1) * slotGap + u(20)
+    g.statusTextX = x + u(24) + MAX_PLANES * slotSize +
+      (MAX_PLANES - 1) * slotGap + u(16)
     g.statusHintY = g.statusY + statusH - u(24)
 
-    // 每个槽都可点：有架 = 选中，收起着 = 展开回原位，空槽 = 告诉你怎么放。
+    // 每个槽都可点：未加入 = 添一架，收起着 = 展开回原位，在场上 = 选中。
     // 槽位是玩家脑子里「第几架」最直接的映射，做成一半可点一半不可点，
     // 就会出现「明明看着有个槽，点了没反应」。
     if (!this.waiting && !this.readying) {
@@ -350,7 +415,7 @@ class Deploy extends Scene {
     })
 
     this.placed.forEach(function (p, i) {
-      if (p.off) return      // 收起的飞机不画（它在状态条里有自己的样子）
+      if (!isOut(p)) return     // 未加入 / 收起的飞机不画（它们在状态条里有自己的样子）
       // 出界 / 压到别人 → 这一架整体标「不合规」（画成半透明）。
       // 「整架」而不是「只标冲突的那几格」：玩家要判断的是「这一架能不能用」，
       // 逐格标会让人以为只有那几个格子有问题。
@@ -362,7 +427,7 @@ class Deploy extends Scene {
         const k = c.row + ',' + c.col
         m[c.row - 1][c.col - 1] = {
           s: c.isHead ? 'head' : 'plane',
-          p: i,
+          p: p.slot,
           bad: bad,
           trimmed: trimmed,
           conflict: !!a.conflict[k],
@@ -377,7 +442,7 @@ class Deploy extends Scene {
     // 但牌上数字没变（因为后放的那架覆盖了先放的），于是一模一样的画面里
     // 他自己也说不清现在选的是哪一架。数字变化就是这条唯一的信号。
     const sel = this.selected
-    if (sel >= 0 && sel < this.placed.length && !this.placed[sel].off) {
+    if (sel >= 0 && sel < this.placed.length && isOut(this.placed[sel])) {
       const hc = headCellOf(this.placed[sel])
       if (hc && !outsideCell(hc)) {
         const cur = m[hc.row - 1][hc.col - 1]
@@ -397,7 +462,7 @@ class Deploy extends Scene {
     else if (this.selected >= 0) focus = this.selected
     if (focus < 0 || focus >= this.placed.length) return out
     this.placed.forEach(function (p, i) {
-      if (i === focus || p.off) return
+      if (i === focus || !isOut(p)) return
       p.cells.forEach(function (c) {
         if (outsideCell(c)) return
         out[c.row + ',' + c.col] = true
@@ -439,9 +504,9 @@ class Deploy extends Scene {
       return out
     }
 
-    // 选中：整架描边（收起的架不在场上，不描边 —— 描了会被当成它还在）
+    // 选中：整架描边（未加入 / 收起的架不在场上，不描边 —— 描了会被当成它还在）
     if (this.selected >= 0 && this.selected < this.placed.length &&
-        !this.placed[this.selected].off) {
+        isOut(this.placed[this.selected])) {
       put(this.placed[this.selected].cells, 'select')
     }
     return out
@@ -484,13 +549,13 @@ class Deploy extends Scene {
       tip = ov.length
         ? '第 ' + ov.map(function (i) { return i + 1 }).join('、') + ' 架机头重叠 · 点该格切换'
         : pending + ' 架位置不合规 · 点红格可调'
-    } else if (this.offCount() > 0) {
-      // 收起不是违规，但同样不能开局 —— 用「放回原位」的说法，不吓人
-      tip = this.offCount() + ' 架已收起 · 点状态条的虚线槽放回原位'
-    } else if (this.placed.length >= this.planeCount) {
-      tip = '已放满 ' + this.planeCount + ' 架 · 点「就绪」开始'
+    } else if (this.activeCount() === 0) {
+      tip = '点棋盘或下方「+」添一架 · 落点即机头'
     } else {
-      tip = '点棋盘放第 ' + (this.placed.length + 1) + ' / ' + this.planeCount + ' 架 · 落点即机头'
+      // 架数只说这一处：棋盘上真的有几架，就是本局几架
+      const n = this.activeCount()
+      const free = this.noneCount()
+      tip = n + ' 架在场' + (free ? ' · 点「+」可再添' : ' · 点「就绪」开始')
     }
     const tipBad = this.drag ? !this.drag.valid : (pending > 0 && this.selected < 0)
     draw.text(ctx, draw.ellipsis(ctx, tip, g.w - u(120), u(theme.size.small)), g.x, g.barY, {
@@ -521,17 +586,16 @@ class Deploy extends Scene {
 
     g.statusSlots.forEach(function (s, i) {
       const p = this.placed[i]
-      const exists = !!p
-      const off = !!(p && p.off)     // 收起着：位置还记着，只是暂时不在场上
-      const on = exists && !off
-      const isSel = this.selected === i
+      const isOn = p.state === SLOT.OUT
+      const isOff = p.state === SLOT.OFF
+      const isSel = this.selected === i && isOn
       const isDrag = !!this.drag && this.drag.idx === i
       if (isSel || isDrag) {
         draw.fillRect(ctx, s.x, s.y, s.w, s.h, c.primaryLight, u(theme.radius.md))
         draw.strokeRect(ctx, s.x, s.y, s.w, s.h, c.primary, u(theme.radius.md), 2)
-      } else if (off) {
-        // 收起：淡底 + 虚线框。虚线是「这里有个空位，但东西还在」的通用表达，
-        // 和「从未放过的空槽」（纯灰底）区分开 —— 否则玩家会以为这架被删了。
+      } else if (isOff) {
+        // 收起：淡底 + 虚线框。虚线是「这里有个位置，但东西被拿开了」的通用表达，
+        // 和「从未加入过的名额」（灰底 + 加号）区分开 —— 否则玩家会以为这架被删了。
         draw.fillRect(ctx, s.x, s.y, s.w, s.h, c.gray, u(theme.radius.md))
         const dd = u(5)
         const gg = u(4)
@@ -542,20 +606,39 @@ class Deploy extends Scene {
         draw.dashedLine(ctx, x2, s.y, x2, y2, col, 1, dd, gg)
         draw.dashedLine(ctx, x2, y2, s.x, y2, col, 1, dd, gg)
         draw.dashedLine(ctx, s.x, y2, s.x, s.y, col, 1, dd, gg)
+      } else if (!isOn) {
+        // 未加入：灰底 + 淡灰飞机 + 右下角「+」。看到就知道「这儿能再添一架」。
+        draw.fillRect(ctx, s.x, s.y, s.w, s.h, c.gray, u(theme.radius.md))
       }
       // 状态条棋子用**和棋盘完全一致的身份色**：
       // 棋盘上第 3 架是紫的，这里第 3 个槽也是紫的，两者形成对应关系。
       // 这也是颜色系统的自解释图例——不用额外写「配色说明」。
       // （槽位只有 72 设计单位，图标里的格太小印不下序号，序号只在棋盘机头格出现）
       const pal = theme.color.planePalette[i % theme.color.planePalette.length]
-      const bad = !!badOf[i]
+      const bad = isOn && !!badOf[i]
+      // 收起的架用 35% 不透明度画身份色：比纯灰多一层「它还是第几架」的信息，
+      // 又比实色明确「它现在不在场上」。
+      const prevAlpha = ctx.globalAlpha
+      if (isOff) ctx.globalAlpha = prevAlpha * 0.35
       planeIcon.render(ctx, s.x + u(4), s.y + u(4), s.w - u(8), {
-        on: on,
-        rotation: exists ? p.rotation : 0,
+        on: isOn || isOff,
+        rotation: p.rotation,
         // 槽位只有 72 设计单位，半透明的小图标看不出来，所以这里用实色红
         color: bad ? c.danger : pal.body,
         headColor: bad ? c.dangerDark : pal.head
       })
+      ctx.globalAlpha = prevAlpha
+
+      // 未加入：右下角加号（唯一表示「这个名额还空着、可点」的符号）
+      if (!isOn && !isOff) {
+        const bx = s.x + s.w - u(10)
+        const by = s.y + s.h - u(10)
+        draw.circle(ctx, bx, by, u(11), c.primary)
+        draw.text(ctx, '+', bx, by + u(1), {
+          size: u(18), weight: 700, color: '#FFFFFF',
+          align: 'center', baseline: 'middle'
+        })
+      }
 
       // 违规徽标：棋盘上可能因为出界而看不全，这一格是「哪一架有问题」的可靠入口
       if (bad) {
@@ -578,8 +661,8 @@ class Deploy extends Scene {
       const hasSel = this.selected >= 0 && this.selected < this.placed.length
       const rotLabel = hasSel ? this.placed[this.selected].rotation : this.rotation
       const offN = this.offCount()
-      line1 = this.activePlaced().length + ' / ' + this.planeCount +
-        (offN ? '（收起 ' + offN + '）' : '') +
+      line1 = this.activeCount() + ' 架在场' +
+        (offN ? ' · 收起 ' + offN : '') +
         ' · 朝 ' + ROTATION_LABEL[rotLabel]
     }
     draw.text(ctx, draw.ellipsis(ctx, line1, g.x + g.w - g.statusTextX - u(24), u(theme.size.body), 500),
@@ -602,14 +685,10 @@ class Deploy extends Scene {
     } else if (pending > 0) {
       hint = '红格放不下 · 拖到空处，或点「先修正」自动整理'
       hintColor = c.danger
-    } else if (this.offCount() > 0) {
-      hint = this.offCount() + ' 架已收起 · 点虚线槽展开回原位'
-    } else if (this.placed.length >= this.planeCount) {
-      hint = '点任意机头可选中调整'
-    } else if (!this.placed.length) {
-      hint = '点棋盘任意格放置 · 落点即机头'
+    } else if (this.activeCount() === 0) {
+      hint = '点棋盘任意格添加 · 也可点下方任一「+」'
     } else {
-      hint = '点机头选中 · 按住机头拖拽'
+      hint = '点「+」添一架 · 点机头选中 · 按住机头拖'
     }
     draw.text(ctx, draw.ellipsis(ctx, hint, g.w - u(48), u(theme.size.tiny)),
       g.x + u(24), g.statusHintY, { size: u(theme.size.tiny), color: hintColor })
@@ -630,12 +709,15 @@ class Deploy extends Scene {
 
     // 就绪按钮兼任「状态指示器」：有几架不合规 / 还没放，按钮自己就说出来（不用点才知道）
     // 「要修正」= 做错了；「还没放」= 没做完。两种处境用不同措辞，别混成一句。
-    const offReady = this.offCount()
+    // 就绪按钮兼任「状态指示器」：有几架不合规，按钮自己就说出来（不用点才知道）。
+    // 收起的架不再是「还没做完」—— 合并数量之后，收起就等于本局不用它，
+    // 所以这里只有一种拦截：放错了。
+    const n = this.activeCount()
     Button.render(ctx, Object.assign({}, g.readyBtn, {
       label: pending > 0
         ? '先修正 ' + pending + ' 架'
-        : (offReady > 0 ? '还有 ' + offReady + ' 架没放' : '就绪'),
-      kind: (pending > 0 || offReady > 0) ? 'warn' : 'primary',
+        : (n === 0 ? '先添一架' : '就绪 · ' + n + ' 架'),
+      kind: pending > 0 ? 'warn' : (n === 0 ? 'warn' : 'primary'),
       loading: this.readying || this.waiting,
       loadingText: this.waiting ? '等待对手…' : '提交中…'
     }))
@@ -655,7 +737,7 @@ class Deploy extends Scene {
     const out = []
     for (let i = this.placed.length - 1; i >= 0; i--) {
       const p = this.placed[i]
-      if (p.off) continue      // 收起的架不在场上，点不到
+      if (!isOut(p)) continue     // 未加入 / 收起的架不在场上，点不到
       for (let k = 0; k < p.cells.length; k++) {
         if (p.cells[k].row === row && p.cells[k].col === col) {
           out.push({ idx: i, isHead: !!p.cells[k].isHead })
@@ -681,6 +763,7 @@ class Deploy extends Scene {
     const self = this
     const out = []
     this.placed.forEach(function (p, i) {
+      if (!isOut(p)) return
       const h = headCellOf(p)
       if (!h || outsideCell(h)) return
       if (self.planesAt(h.row, h.col).length > 1) out.push(i)
@@ -727,16 +810,17 @@ class Deploy extends Scene {
       return
     }
 
-    if (this.placed.length >= this.planeCount) {
+    // 三个名额都用过（在场上 / 收起）→ 没有可添的地方，说清现状
+    const free = this.firstFreeSlot()
+    if (free < 0) {
       const offN = this.offCount()
-      // 有收起的：位置已经占满了名额，但场上还空着 —— 说出来路，别让玩家以为放不下了
       this.app.toast(offN
         ? '还有 ' + offN + ' 架收起着 · 点状态条的虚线槽放回原位'
-        : '已放满 ' + this.planeCount + ' 架 · 点机头可选中调整')
+        : '已经 ' + MAX_PLANES + ' 架了 · 点机头可选中调整')
       return
     }
 
-    this.placeAt(row, col)
+    this.placeAt(row, col, free)
   }
 
   /** 机头必须留在棋盘内（它是抓手，也是「以机头为轴旋转」的轴心） */
@@ -748,43 +832,89 @@ class Deploy extends Scene {
   }
 
   /**
-   * 在 (row,col) 放一架。
+   * 在 (row,col) 添一架到第 slot 个名额。
    *
    * 与旧版的关键差别：**不再自动换位置 / 换朝向**。
    * 点哪儿就放哪儿，放不下就标红，玩家自己决定要不要立刻调。
    * （理由见文件头「编辑期宽松 · 提交期严格」）
    */
-  placeAt(row, col) {
+  placeAt(row, col, slot) {
+    const p = this.placed[slot]
+    if (!p || p.state !== SLOT.NONE) return
     const head = this.clampHead(row, col)
-    const cells = getAbsoluteCells('standard', head.row, head.col, this.rotation)
-    this.placed.push({
-      planeId: 'standard',
-      anchorRow: head.row,
-      anchorCol: head.col,
-      rotation: this.rotation,
-      cells: cells
-    })
-    this.layout()              // 状态条多了一个可点的棋子
+    p.state = SLOT.OUT
+    p.planeId = 'standard'
+    p.anchorRow = head.row
+    p.anchorCol = head.col
+    p.rotation = this.rotation
+    p.cells = getAbsoluteCells(p.planeId, head.row, head.col, p.rotation)
+    // **不选中**。玩家刚亲手点下位置，位置意图已经表达完了；
+    // 若顺手选中，下一次点空白就会先「退出选中」而不是接着添一架 ——
+    // 连放三架变成「放一架、点一下空白、再放一架」。
+    this.layout()              // 槽位状态变了，重排一次
 
-    const text = this.issueTextOf(this.placed.length - 1)
-    if (text) this.app.toast('第 ' + this.placed.length + ' 架放不下 · 已标红')
+    const text = this.issueTextOf(slot)
+    if (text) this.app.toast('第 ' + (slot + 1) + ' 架放不下 · 已标红')
   }
 
-  /** 点状态条里的飞机棋子 → 选中那一架 */
+  /**
+   * 点状态条的「+」→ 把这一架添到棋盘上。
+   *
+   * 位置由系统给：从棋盘中心向外找第一个放得下的位置，朝向沿用当前待放朝向。
+   * 这样做不是「替玩家做决定」，而是「这个动作里玩家还没表达位置意图」——
+   * 落好之后立刻选中，按住机头就能拖走，主动权仍在玩家手上。
+   */
+  onAddSlot(slot) {
+    const p = this.placed[slot]
+    if (!p || p.state !== SLOT.NONE) return
+
+    const occupied = []
+    this.placed.forEach(function (q, i) {
+      if (i === slot || !isOut(q)) return
+      q.cells.forEach(function (c) {
+        if (!outsideCell(c)) occupied.push(c)
+      })
+    })
+
+    const res = fit.findFit({
+      planeId: 'standard',
+      anchorRow: Math.ceil(BOARD_SIZE / 2),
+      anchorCol: Math.ceil(BOARD_SIZE / 2),
+      rotation: this.rotation,
+      occupied: occupied,
+      allowMove: true,
+      allowRotate: false,     // 添一架不该顺手把朝向改了
+      maxRadius: BOARD_SIZE,  // 由中心向外逐环找，落点就是「离中心最近的空位」
+      prefer: 'move'
+    })
+
+    const head = res
+      ? { row: res.anchorRow, col: res.anchorCol }
+      : this.clampHead(Math.ceil(BOARD_SIZE / 2), Math.ceil(BOARD_SIZE / 2))
+
+    p.state = SLOT.OUT
+    p.planeId = 'standard'
+    p.anchorRow = head.row
+    p.anchorCol = head.col
+    p.rotation = this.rotation
+    p.cells = getAbsoluteCells(p.planeId, head.row, head.col, p.rotation)
+    this.selected = slot
+    this.layout()
+
+    this.app.toast('第 ' + (slot + 1) + ' 架已添到棋盘 · 按住机头拖到想要的位置')
+  }
+
+  /** 点状态条里的飞机棋子 → 未加入=添一架 / 收起=回原位 / 在场上=选中 */
   onPickSlot(idx) {
     if (this.waiting || this.readying) return
 
-    // 槽位有架 → 选中；槽位空着但记着一架收起的 → 展开回原位
     const p = this.placed[idx]
-    if (p && p.off) return this.onRestore(idx)
-    if (!p && idx >= this.placed.length) {
-      // 还没放过的空槽：告诉玩家怎么放，而不是静默无反应
-      this.app.toast('这一架还没放 · 点棋盘任意格放置')
-      return
-    }
+    if (!p) return
+    if (p.state === SLOT.OFF) return this.onRestore(idx)
+    if (p.state === SLOT.NONE) return this.onAddSlot(idx)
 
     this.selected = (this.selected === idx) ? -1 : idx
-    if (this.selected >= 0) this.rotation = this.placed[idx].rotation
+    if (this.selected >= 0) this.rotation = p.rotation
   }
 
   /* ---- 拖拽移动（按住机头） ---- */
@@ -906,7 +1036,7 @@ class Deploy extends Scene {
    */
   rotatePlane(idx) {
     const p = this.placed[idx]
-    if (!p || p.off) return false      // 收起的架不在场上，转了也看不见
+    if (!isOut(p)) return false     // 未加入 / 收起的架不在场上，转了也看不见
     const next = (p.rotation + 1) % 4
     p.rotation = next
     p.cells = getAbsoluteCells(p.planeId, p.anchorRow, p.anchorCol, next)
@@ -927,7 +1057,7 @@ class Deploy extends Scene {
     // 「最近放下的那一架」要跳过收起的 —— 它不在场上，转了也看不见
     let last = -1
     for (let i = this.placed.length - 1; i >= 0; i--) {
-      if (!this.placed[i].off) { last = i; break }
+      if (isOut(this.placed[i])) { last = i; break }
     }
     if (last < 0) {
       this.rotation = (this.rotation + 1) % 4
@@ -937,29 +1067,34 @@ class Deploy extends Scene {
     this.rotatePlane(last)
   }
 
-  /** 收起这一架：只打标记，位置 / 朝向 / 编号全部留着，点虚线条就能展开回原位 */
+  /** 收起这一架：只改状态，位置 / 朝向 / 编号全部留着，点虚线槽就能展开回原位 */
   onStashSelected() {
     if (this.selected < 0) return
     const p = this.placed[this.selected]
-    if (!p || p.off) return
+    if (!isOut(p)) return
     const n = this.selected + 1
-    p.off = true
+    p.state = SLOT.OFF
     this.selected = -1
     this.drag = null
     this.layout()
-    this.app.toast('第 ' + n + ' 架已收起 · 位置记着，点虚线槽放回来')
+    const left = this.activeCount()
+    this.app.toast(left > 0
+      ? '第 ' + n + ' 架已收起 · 本局打 ' + left + ' 架，点虚线槽可放回'
+      : '第 ' + n + ' 架已收起 · 至少要留 1 架')
   }
 
   /** 展开：回到收起前的位置和朝向（位置现在不合法也照样展开，标红即可） */
   onRestore(idx) {
     const p = this.placed[idx]
-    if (!p || !p.off) return false
-    p.off = false
+    if (!p || p.state !== SLOT.OFF) return false
+    p.state = SLOT.OUT
     this.selected = idx
     this.rotation = p.rotation
     this.layout()
+    const n = this.activeCount()
     const text = this.issueTextOf(idx)
-    this.app.toast('第 ' + (idx + 1) + ' 架已放回原位' + (text ? ' · 但现在' + text : ''))
+    this.app.toast('第 ' + (idx + 1) + ' 架已放回原位 · 本局打 ' + n + ' 架' +
+      (text ? ' · 但现在' + text : ''))
     return true
   }
 
@@ -970,18 +1105,37 @@ class Deploy extends Scene {
     this.onRandom()
   }
 
+  /**
+   * 随机布阵：只重排**当前在场上那几架**的位置，不偷偷改架数。
+   * 一架都没有时才补满 3 架 —— 否则「点了一下什么也没发生」。
+   */
   onRandom() {
     if (this.waiting) return
-    this.placed = randomDeploy(this.planeCount, 'standard', BOARD_SIZE)
+    const keep = this.activeCount()
+    const n = keep > 0 ? keep : MAX_PLANES
+    const list = randomDeploy(n, 'standard', BOARD_SIZE)
+    const slots = createSlots()
+    list.forEach(function (p, i) {
+      slots[i].state = SLOT.OUT
+      slots[i].planeId = p.planeId
+      slots[i].anchorRow = p.anchorRow
+      slots[i].anchorCol = p.anchorCol
+      slots[i].rotation = p.rotation
+      slots[i].cells = p.cells
+    })
+    this.placed = slots
     this.selected = -1
     this.drag = null
     this.layout()
-    this.app.toast('已随机布阵')
+    this.app.toast(keep > 0
+      ? '已随机重排 ' + n + ' 架'
+      : '已随机布置 ' + n + ' 架')
   }
 
+  /** 清空 = 三个名额全部回到「未加入」，位置与朝向一并清掉 */
   onClear() {
     if (this.waiting) return
-    this.placed = []
+    this.placed = createSlots()
     this.selected = -1
     this.drag = null
     this.layout()
@@ -1027,50 +1181,20 @@ class Deploy extends Scene {
   onReady() {
     if (this.waiting || this.readying) return
 
-    // 收起的架等于还没上场，先拦住 —— 它的位置记着，一句话就能放回来
-    const offN = this.offCount()
-    if (offN > 0) {
-      this.blockRestore(offN)
-      return
-    }
-    if (this.activePlaced().length < MIN_PLANES) {
-      this.app.toast('至少布置 1 架飞机')
+    // 一架都没有 → 没法开局。这不是「违规」，是还没开始摆
+    if (this.activeCount() < MIN_PLANES) {
+      this.app.toast('至少添 1 架飞机')
       return
     }
 
+    // 收起的架**不再拦截**：合并数量之后，收起就等于本局不用它，
+    // 架数本来就不固定，「还有 N 架没放」这个说法已经没有意义了。
     const a = this.audit()
     if (!a.ok) {
       this.blockStart(a)
       return
     }
     this.submit()
-  }
-
-  /**
-   * 有架还收起着 → 不能开局。
-   *
-   * 和 blockStart 分开写，因为这不是「做错了」而是「还没做完」：
-   * 标题不用警示口吻，也不用红色，确认按钮直接就是「放回原位」。
-   * 把「未完成」和「有错误」混成一类，会让玩家在两种完全不同的处境里
-   * 收到同一种紧张感 —— 久了就对提示免疫。
-   */
-  blockRestore(n) {
-    const self = this
-    const ids = []
-    this.placed.forEach(function (p, i) { if (p.off) ids.push(i + 1) })
-
-    dialog.confirm({
-      title: '还有 ' + n + ' 架没放上去',
-      content: '第 ' + ids.join('、') + ' 架收起来了，位置都记着。\n' +
-        '点状态条的虚线槽可以单独放回来。',
-      confirmText: '放回原位',
-      cancelText: '我自己放',
-      onOk: function () {
-        self.placed.forEach(function (p) { if (p.off) p.off = false })
-        self.layout()
-        self.app.toast('已放回 ' + n + ' 架')
-      }
-    })
   }
 
   /**
@@ -1114,7 +1238,7 @@ class Deploy extends Scene {
     // A 想去 B 现在的位置，而 B 也等着挪，两个都搜不到空位。
     let occupied = []
     this.placed.forEach(function (p, i) {
-      if (bad[i] || p.off) return      // 收起的架不在场上，不占位
+      if (bad[i] || !isOut(p)) return      // 收起 / 未加入的架不在场上，不占位
       p.cells.forEach(function (c) {
         if (!outsideCell(c)) occupied.push(c)
       })

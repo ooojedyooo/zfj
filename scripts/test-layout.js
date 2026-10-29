@@ -83,23 +83,22 @@ DEVICES.forEach(function (d) {
     if (i > 0) overlap(lobby.geo.buttons[i - 1], b, '大厅按钮' + i, '大厅按钮' + (i + 1), errs)
   })
 
-  // --- 房间（create，3 架）---
+  // --- 房间（create，含密码行）---
+  // 架数已移到布阵页，这一页只剩密码行 —— 检查密码与开关不压在一起、说明行不出卡片
   const room = app.get('room')
   app.go('room', { mode: 'create' })
-  room.planeCount = 3
   room.usePassword = true
   room.layout()
   inside(room.geo.card, W, H, '房间卡片', errs)
   inside(room.geo.actionBtn, W, H, '创建按钮', errs)
-  room.geo.planeSlots.forEach(function (s, i) { inside(s, W, H, '数量棋子' + (i + 1), errs) })
-  room.geo.planeSlots.forEach(function (s, i) {
-    if (i > 0) overlap(room.geo.planeSlots[i - 1], s, '棋子' + i, '棋子' + (i + 1), errs)
-  })
   overlap(room.geo.card, room.geo.actionBtn, '房间卡片', '创建按钮', errs)
-  // 棋子不能越过卡片右边界
-  const lastSlot = room.geo.planeSlots[2]
-  if (lastSlot.x + lastSlot.w > room.geo.card.x + room.geo.card.w) {
-    errs.push('数量棋子超出卡片右边 ' + Math.round(lastSlot.x + lastSlot.w))
+  inside(room.geo.switch, W, H, '密码开关', errs)
+  if (room.geo.hintY > room.geo.card.y + room.geo.card.h) {
+    errs.push('说明文字超出卡片底 ' + Math.round(room.geo.hintY))
+  }
+  // 密码文字（pwdBoxY）不能滑出卡片底
+  if (room.geo.pwdBoxY && room.geo.pwdBoxY > room.geo.card.y + room.geo.card.h - 8) {
+    errs.push('密码文字滑出卡片底 ' + Math.round(room.geo.pwdBoxY))
   }
 
   // --- 布阵（3 架）---
@@ -107,7 +106,6 @@ DEVICES.forEach(function (d) {
   app.go('deploy', {})
   const dep = app.scene
   dep.stopCountdown()
-  dep.planeCount = 3
   dep.layout()
   const g = dep.geo
   inside(g.board, W, H, '棋盘', errs)

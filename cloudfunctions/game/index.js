@@ -120,7 +120,7 @@ async function deploy(event, openid) {
   if (allReady) {
     // 双方就绪 → 开局，随机决定先手（T-01）
     const firstIndex = Math.random() < 0.5 ? 0 : 1
-    data.battle = makeInitialBattle(players, players[firstIndex].openid)
+    data.battle = makeInitialBattle(players, players[firstIndex].openid, game.deploys)
   }
 
   await db.collection(ROOMS).doc(roomId).update({ data })
@@ -128,16 +128,20 @@ async function deploy(event, openid) {
   return ok({ allReady, firstHand: allReady ? data.battle.turn : '' })
 }
 
-function makeInitialBattle(players, firstOpenid) {
+function makeInitialBattle(players, firstOpenid, deploys) {
   const marks = {}
   const incoming = {}
   const streak = {}
   const stats = {}
+  // 各自的架数：架数已改为每人在布阵时决定，双方可能不同，
+  // 所以「还剩几架」必须各算各的。只暴露数量，不暴露形状/朝向（T-08 不变）。
+  const counts = {}
   players.forEach(p => {
     marks[p.openid] = {}
     incoming[p.openid] = {}
     streak[p.openid] = 0
     stats[p.openid] = { kill: 0, lost: 0, shots: 0 }
+    counts[p.openid] = (deploys && deploys[p.openid] ? deploys[p.openid].length : 0)
   })
   return {
     turn: firstOpenid,          // 当前轮到谁
@@ -147,6 +151,7 @@ function makeInitialBattle(players, firstOpenid) {
     incoming,                   // incoming[A] = A 自己棋盘上被炸的记录
     streak,                     // 连续超时次数
     stats,                      // stats[A] = { kill: 击毁对方架数, lost: 被击毁架数, shots: 出手次数 }
+    counts,                     // counts[A] = A 本局放了几架（双方可能不同）
     finished: false,
     winner: '',
     endType: '',

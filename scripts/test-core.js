@@ -130,6 +130,84 @@ while (!g1.finished && g1.foeShots < 150) { if (!g1.foeFire()) break }
 assert('AI 没有对同一格开两次火',
   Object.keys(g1.foeProbes).length === g1.foeShots)
 
+console.log('\n[9] AI 强度参数（services/aiTune）')
+const aiTune = require('../miniprogram/services/aiTune')
+
+aiTune.reset()
+const d0 = aiTune.get()
+assert('默认值：机头权重 1.3 / 走神率 0.35',
+  d0.headWeight === 1.3 && d0.slipRate === 0.35)
+assert('默认强度是「均衡」', aiTune.level(d0).name === '均衡')
+
+// 任何来源的值都要收成合法参数：storage 里可能是旧版本留下的、手输的、NaN
+const hi = aiTune.normalize({ headWeight: 99, slipRate: 5 })
+assert('越界值钳到上限 3.0 / 0.9', hi.headWeight === 3 && hi.slipRate === 0.9)
+const lo = aiTune.normalize({ headWeight: -1, slipRate: -3 })
+assert('越界值钳到下限 0.6 / 0', lo.headWeight === 0.6 && lo.slipRate === 0)
+const bad = aiTune.normalize({ headWeight: 'abc', slipRate: null })
+assert('非法值回落默认（NaN 会让 AI 选点返回 null 而卡死）',
+  bad.headWeight === 1.3 && bad.slipRate === 0.35)
+const snapped = aiTune.normalize({ headWeight: 1.27, slipRate: 0.33 })
+assert('对齐步长：1.27 → 1.3', snapped.headWeight === 1.3)
+assert('对齐步长：0.33 → 0.35', snapped.slipRate === 0.35)
+
+// 滑块只认整数，换算必须能原路走回来（差一位就会「拖到 1.3 显示 1.4」）
+let roundTripOk = true
+for (let v = 6; v <= 30; v++) {
+  if (aiTune.headToSlider(aiTune.sliderToHead(v)) !== v) roundTripOk = false
+}
+for (let v = 0; v <= 18; v++) {
+  if (aiTune.slipToSlider(aiTune.sliderToSlip(v)) !== v) roundTripOk = false
+}
+assert('滑块换算双向无漂移（机头 6~30 / 走神 0~18）', roundTripOk)
+
+assert('走神率 90% → 沙包', aiTune.level({ headWeight: 1.3, slipRate: 0.9 }).name === '沙包')
+assert('走神率 0 + 机头 3.0 → 碾压', aiTune.level({ headWeight: 3, slipRate: 0 }).name === '碾压')
+assert('等级索引在 0~4 之间', aiTune.level({ headWeight: 2.5, slipRate: 0.3 }).index <= 4)
+
+aiTune.set({ headWeight: 2.5, slipRate: 0.1 })
+assert('set / get 往返一致',
+  aiTune.get().headWeight === 2.5 && aiTune.get().slipRate === 0.1)
+assert('非默认值能被识别', aiTune.isDefault() === false)
+aiTune.reset()
+assert('reset 回到默认', aiTune.isDefault() === true)
+
+/* 接线验证：参数必须真的改变出招，而不只是存下来了。
+   成对比较 —— 同一批棋盘换参数各跑一遍，否则棋盘难易差异会盖掉策略差异。 */
+function runAiOn(planes) {
+  const g = new LocalGame({ planeCount: planes.length, firstHand: false })
+  g.myDeployed = planes
+  g.myIndex = buildIndex(planes)
+  g.foeShots = 0
+  g.finished = false
+  while (!g.finished && g.foeShots < 150) {
+    if (!g.foeFire()) return null
+  }
+  return g.finished ? g.foeShots : null
+}
+
+const boards = []
+for (let i = 0; i < 30; i++) boards.push(randomDeploy(1, 'standard', BOARD_SIZE))
+function avgOn(list) {
+  let t = 0
+  let n = 0
+  list.forEach(function (b) {
+    const s = runAiOn(b)
+    if (s != null) { t += s; n++ }
+  })
+  return n ? t / n : Infinity
+}
+
+aiTune.set({ headWeight: 3, slipRate: 0 })
+const avgStrict = avgOn(boards)
+aiTune.set({ headWeight: 0.6, slipRate: 0.9 })
+const avgDumb = avgOn(boards)
+aiTune.reset()
+
+assert('参数生效：满血 AI 比沙包少用三成以上炮数（' +
+  avgStrict.toFixed(1) + ' vs ' + avgDumb.toFixed(1) + '）',
+  avgDumb > avgStrict * 1.3)
+
 console.log('\n----------------------------------------')
 console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 console.log('----------------------------------------\n')

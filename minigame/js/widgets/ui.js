@@ -47,14 +47,30 @@ function sectionTitle(ctx, layout, x, y, text) {
   })
 }
 
-/** 离线试玩提示条 */
-function modeTip(ctx, layout, x, y, w, text) {
+/**
+ * 离线试玩提示条
+ * @param {object} opt { action } —— 右侧加一个可点提示（主色 + 下划线，像链接）
+ */
+function modeTip(ctx, layout, x, y, w, text, opt) {
   const u = layout.u.bind(layout)
+  const o = opt || {}
   const h = u(52)
   draw.fillRect(ctx, x, y, w, h, theme.color.gray, u(theme.radius.sm))
   draw.text(ctx, text, x + u(20), y + h / 2, {
     size: u(theme.size.tiny), color: theme.color.textMuted
   })
+  if (o.action) {
+    const size = u(theme.size.tiny)
+    const tw = draw.measure(ctx, o.action, size)
+    const ax = x + w - u(20) - tw
+    const ay = y + h / 2
+    draw.text(ctx, o.action, x + w - u(20), ay, {
+      size: size, color: theme.color.primary, align: 'right'
+    })
+    // 下划线是「这里能点」的信号。不用箭头字符 —— 全角符号在不同
+    // Android 回退字体里渲染不一致（返回键的「‹」就踩过）
+    draw.line(ctx, ax, ay + u(16), ax + tw, ay + u(16), theme.color.primary, 1)
+  }
   return h
 }
 

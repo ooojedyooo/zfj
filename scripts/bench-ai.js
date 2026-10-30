@@ -7,15 +7,44 @@
 //
 // 运行：node scripts/bench-ai.js          默认每档 300 局
 //       node scripts/bench-ai.js 1000     指定局数
+//       node scripts/bench-ai.js 500 --head=3 --slip=0    指定强度参数
+//
+// 参数与大厅里那个「AI 强度」调节页是同一套（services/aiTune），
+// 所以在这里调出来的数，就是玩家在手机上能拖出来的数。
 
 const { LocalGame } = require('../miniprogram/services/localGame')
 const { randomDeploy } = require('../miniprogram/utils/plane')
 const { buildIndex, judge } = require('../miniprogram/utils/judge')
 const { RESULT, BOARD_SIZE } = require('../miniprogram/config/rules')
 const { key } = require('../miniprogram/utils/board')
+const aiTune = require('../miniprogram/services/aiTune')
 
-const ROUNDS = parseInt(process.argv[2], 10) || 300
+/** 取 --name=value，没有则返回 null */
+function argOf(name) {
+  const hit = process.argv.slice(2).filter(function (a) {
+    return a.indexOf('--' + name + '=') === 0
+  })[0]
+  return hit ? Number(hit.split('=')[1]) : null
+}
+
+const ROUNDS = parseInt(process.argv.slice(2).filter(function (a) {
+  return a.indexOf('--') !== 0
+})[0], 10) || 300
 const MAX_SHOTS = 200   // 超过这个数算“卡住了”，不参与统计
+
+const _argHead = argOf('head')
+const _argSlip = argOf('slip')
+if (_argHead != null || _argSlip != null) {
+  const cur = aiTune.get()
+  aiTune.set({
+    headWeight: _argHead == null ? cur.headWeight : _argHead,
+    slipRate: _argSlip == null ? cur.slipRate : _argSlip
+  })
+}
+const TUNE = aiTune.get()
+const TUNE_DESC = '机头 ' + TUNE.headWeight.toFixed(1) +
+  ' / 走神 ' + Math.round(TUNE.slipRate * 100) + '%' +
+  '（' + aiTune.level(TUNE).name + ' · 约 ' + aiTune.level(TUNE).shots + ' 炮打完 1 架）'
 
 /* ---------------- 旧策略（改造前的实现，原样保留作对照） ---------------- */
 
@@ -99,7 +128,8 @@ function pct(a, p) {
 
 /* ---------------- 主流程 ---------------- */
 
-console.log('离线 AI 基准 · 每档 ' + ROUNDS + ' 局\n')
+console.log('离线 AI 基准 · 每档 ' + ROUNDS + ' 局')
+console.log('强度参数：' + TUNE_DESC + '\n')
 
 const rows = []
 

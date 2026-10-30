@@ -11,15 +11,18 @@ const { getAbsoluteCells, randomDeploy, validatePlacement, isInside } = require(
 const { buildIndex, judge, isAllDestroyed } = require('../utils/judge')
 const { RESULT, BOARD_SIZE, END_TYPE } = require('../config/rules')
 const { key } = require('../utils/board')
+const aiTune = require('./aiTune')
 
-// ── 离线 AI 的两个强度旋钮（只影响单机试玩，联机对手是真人，碰不到这段） ──
+// ── 离线 AI 的两个强度旋钮 ──
+// 原来这里是两个写死的常量，改一次要重传代码包，测试期根本没法试手感。
+// 现在收进 services/aiTune.js：默认值仍写在那里，但大厅里有个调节页可以实时改，
+// 改完下一炮就生效（参数在 _foePickTarget / _densityPick 里现读，不做实例快照）。
+// 只影响单机试玩 —— 联机对手是真人，碰不到这段。
+//
 // HEAD_WEIGHT 机头格在密度计算里的权重。1 = 不打折、纯看可能性；
 //             调高会让它更执着于「猜机头」，但也会显得过于精准。
 // SLIP_RATE   走神概率：这一炮不走推理，退回「摸四邻」的笨办法。
 //             0 是满血碾压（实测 1 架 8 炮），太高又显得蠢。
-// 调参方式：node scripts/bench-ai.js 看平均用炮，别凭感觉拧。
-const HEAD_WEIGHT = 1.3
-const SLIP_RATE = 0.35
 
 /** 生成 6 位房间号 */
 function genRoomId() {
@@ -170,7 +173,8 @@ class LocalGame {
    * 比人稍强一点、会犯错、有破绽可抓 —— 这才是陪练该有的手感。
    */
   _foePickTarget() {
-    if (Math.random() < SLIP_RATE) {
+    // 每炮现读，不在构造函数里快照 —— 在调节页改完，退出后这一炮就该按新参数走
+    if (Math.random() < aiTune.get().slipRate) {
       return this._naivePick() || this._densityPick() || this._randomPick()
     }
     return this._densityPick() || this._randomPick()
@@ -189,6 +193,7 @@ class LocalGame {
     const known = this.foeProbes
     const hunt = this._foeHunt || {}
     const hunting = Object.keys(hunt).length > 0
+    const headWeight = aiTune.get().headWeight
     const score = {}          // key -> 权重累计
 
     for (let r = 1; r <= BOARD_SIZE; r++) {
@@ -223,7 +228,7 @@ class LocalGame {
             const cell = cells[i]
             const k = key(cell.row, cell.col)
             if (known[k]) continue          // 已经打过的格不用再打
-            score[k] = (score[k] || 0) + w * (cell.isHead ? HEAD_WEIGHT : 1)
+            score[k] = (score[k] || 0) + w * (cell.isHead ? headWeight : 1)
           }
         }
       }
@@ -232,7 +237,16 @@ class LocalGame {
     return this._pickByScore(score)
   }
 
-  /** 笨招：命中就摸上下左右，无记忆。也就是改造之前的全部策略 */
+  /**
+   * 笨招 —— 改造之前那套完整策略：有线索就摸四邻（无记忆），没线索就全局随机撒网
+   *
+   * 【不能在没有线索时返回 null】早先这里 return null，靠 `_naivePick() || _densityPick()`
+   * 兜底，看似安全，实际把「走神」削成了「只在追线索时走神」：
+   * 一局里绝大部分炮都发生在「还没打中任何东西」的搜寻阶段，那一段全部落回密度法。
+   * 实测走神率 0.10 的平均用炮（11.08）反而比 0.35（10.51）更多 —— 旋钮不单调，
+   * 滑块中间那些档位就是噪音，玩家拖来拖去只会觉得「没规律」。
+   * 真正的笨办法必须包含「没线索就瞎撒网」，这才是旧 AI 的完整行为。
+   */
   _naivePick() {
     // 只看「正在追的线索」，不看全部历史命中 ——
     // 已经击毁的那架留下的 HIT 格还在 foeProbes 里，围着它们打是纯浪费。
@@ -247,7 +261,7 @@ class LocalGame {
         return { row: nr, col: nc }
       }
     }
-    return null
+    return this._randomPick()
   }
 
   /**

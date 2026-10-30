@@ -1571,6 +1571,137 @@ async function main() {
     assert.strictEqual(ROOMUTIL.pickAutoTarget(all), null)
   })
 
+  /* ---------- 13. 离线 AI 调参页 ---------- */
+  section('[13] 离线 AI 强度调节（测试期免重传代码包）')
+
+  const aiTune = require('../minigame/js/shared/services/aiTune')
+  aiTune.reset()
+
+  app.reset('lobby')
+  const lb2 = app.scene
+  check('大厅离线提示条整条可点', function () {
+    assert.ok(lb2.geo.tipY != null, '没有离线提示条')
+    const inside = lb2.zones.filter(function (z) {
+      return z.onTap && geom.inRect(lb2.geo.x + 20, lb2.geo.tipY + app.u(26), z)
+    })
+    assert.ok(inside.length > 0, '提示条没注册可点区域')
+  })
+
+  tapAt(lb2.geo.x + 20, lb2.geo.tipY + app.u(26))
+  check('点提示条进入调参页', function () { assert.strictEqual(app.scene.name, 'ai-tune') })
+
+  const at = app.scene
+  check('两个滑块都在屏内，评级卡不压住底部按钮', function () {
+    ;['headSlider', 'slipSlider'].forEach(function (k) {
+      const r = at.geo[k]
+      assert.ok(r && r.w > 0 && r.h > 0, k + ' 没算出来')
+      assert.ok(r.x >= 0 && r.x + r.w <= 375, k + ' 横向溢出')
+    })
+    const last = at.geo.levelCard
+    assert.ok(last.y + last.h < at.geo.btn.y, '评级卡压住按钮')
+    assert.ok(at.geo.btn.y + at.geo.btn.h <= 667, '按钮出屏')
+  })
+  check('调参页可渲染', function () { app.renderOnce() })
+  check('滑块不注册 zone（否则 tap 会按同一坐标二次跳值）', function () {
+    const bad = at.zones.filter(function (z) {
+      return geom.inRect(z.x + z.w / 2, z.y + z.h / 2, at.geo.headSlider) ||
+        geom.inRect(z.x + z.w / 2, z.y + z.h / 2, at.geo.slipSlider)
+    })
+    assert.strictEqual(bad.length, 0, '滑块被注册成了可点区域')
+  })
+
+  check('进入时读到的是磁盘上的当前值', function () {
+    aiTune.set({ headWeight: 2.0, slipRate: 0.2 })
+    at.onEnter()
+    assert.strictEqual(at.tune.headWeight, 2.0)
+    assert.strictEqual(at.tune.slipRate, 0.2)
+  })
+
+  check('拖到左端：机头 0.6 / 走神 0，等级变「难缠」', function () {
+    const h = at.geo.headSlider
+    app.touchStart(h.x + 1, h.y + h.h / 2)
+    app.touchEnd(h.x + 1, h.y + h.h / 2)
+    assert.strictEqual(at.tune.headWeight, 0.6, '机头权重没到左端：' + at.tune.headWeight)
+    const s = at.geo.slipSlider
+    app.touchStart(s.x + 1, s.y + s.h / 2)
+    app.touchEnd(s.x + 1, s.y + s.h / 2)
+    assert.strictEqual(at.tune.slipRate, 0, '走神率没到 0：' + at.tune.slipRate)
+    assert.strictEqual(aiTune.get().slipRate, 0, '松手后没落盘')
+    // 不走神但机头权重低 → 会推理、但不太会找机头，仍是「难缠」
+    assert.strictEqual(aiTune.level().name, '难缠')
+  })
+
+  check('拖到右端：机头 3.0 / 走神 0.9，等级变「轻松」', function () {
+    const h = at.geo.headSlider
+    app.touchStart(h.x + h.w - 1, h.y + h.h / 2)
+    app.touchEnd(h.x + h.w - 1, h.y + h.h / 2)
+    assert.strictEqual(at.tune.headWeight, 3.0, '机头权重没到右端：' + at.tune.headWeight)
+    const s = at.geo.slipSlider
+    app.touchStart(s.x + s.w - 1, s.y + s.h / 2)
+    app.touchEnd(s.x + s.w - 1, s.y + s.h / 2)
+    assert.strictEqual(at.tune.slipRate, 0.9, '走神率没到 0.9：' + at.tune.slipRate)
+    // 走神拉满但机头权重也拉满 → 比纯沙包稍强一点（实测 13.6 炮 vs 15.2）
+    assert.strictEqual(aiTune.level().name, '轻松')
+  })
+
+  check('拖动过程中不写盘，松手才落一次', function () {
+    const s = at.geo.slipSlider
+    const cy = s.y + s.h / 2
+    const before = STORE[aiTune.KEY].slipRate
+    app.touchStart(s.x + s.w / 2, cy)
+    app.touchMove(s.x + s.w * 0.7, cy)
+    assert.strictEqual(STORE[aiTune.KEY].slipRate, before, '拖动中就写盘了')
+    app.touchEnd(s.x + s.w * 0.7, cy)
+    assert.notStrictEqual(STORE[aiTune.KEY].slipRate, before, '松手没落盘')
+  })
+
+  check('点「恢复默认」回到 1.3 / 0.35', function () {
+    tapRect(at.geo.btn)
+    assert.strictEqual(at.tune.headWeight, 1.3)
+    assert.strictEqual(at.tune.slipRate, 0.35)
+    assert.strictEqual(aiTune.isDefault(), true, '重置后落盘的不是默认值')
+  })
+
+  check('调参页改完返回，大厅显示的强度跟着变', function () {
+    const s = at.geo.slipSlider
+    app.touchStart(s.x + s.w - 1, s.y + s.h / 2)
+    app.touchEnd(s.x + s.w - 1, s.y + s.h / 2)
+    assert.strictEqual(aiTune.get().slipRate, 0.9)
+    at.onBack()
+    assert.strictEqual(app.scene.name, 'lobby')
+    assert.strictEqual(aiTune.level().name, '沙包', '大厅读到的还是旧强度')
+    app.renderOnce()
+  })
+
+  check('引擎每炮现读参数，改完不用重开对局', function () {
+    const LG = require('../minigame/js/shared/services/localGame').LocalGame
+    const planes = require('../minigame/js/shared/utils/plane').randomDeploy(1, 'standard', 9)
+    const g = new LG({ planeCount: 1, firstHand: false })
+    g.myDeployed = planes
+    g.myIndex = buildIndex(planes)
+    g.foeProbes = {}
+    g._foeHunt = { '5,5': true }
+
+    // 走神率 0.9 → 九成以上的炮都走笨招。有线索时，笨招的第一个邻居固定是「上邻」(4,5)
+    aiTune.set({ headWeight: 1.3, slipRate: 0.9 })
+    let naive = 0
+    for (let i = 0; i < 40; i++) {
+      const p = g._foePickTarget()
+      if (p.row === 4 && p.col === 5) naive++
+    }
+    assert.ok(naive >= 30, '走神率 0.9 却只有 ' + naive + '/40 走笨招')
+
+    // 中途改成 0 → 立刻按密度法走，不需要重建对局（引擎不做参数快照）
+    aiTune.set({ headWeight: 1.3, slipRate: 0 })
+    let same = 0
+    for (let i = 0; i < 40; i++) {
+      const p = g._foePickTarget()
+      if (p.row === 4 && p.col === 5) same++
+    }
+    assert.ok(same < 20, '改成 0 后行为没变（' + same + '/40），参数被快照了')
+    aiTune.reset()
+  })
+
   /* ---------- 收尾 ---------- */
   app.stop()
   offline._reset()

@@ -54,7 +54,9 @@ const app = createApp({
     room: require('./js/scenes/room'),
     deploy: require('./js/scenes/deploy'),
     battle: require('./js/scenes/battle'),
-    result: require('./js/scenes/result')
+    result: require('./js/scenes/result'),
+    // 测试期用的离线 AI 调参页，从大厅的离线提示条进
+    'ai-tune': require('./js/scenes/ai-tune')
   }
 })
 

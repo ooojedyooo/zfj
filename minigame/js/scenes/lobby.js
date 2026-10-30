@@ -20,6 +20,7 @@ const dialog = require('../core/dialog')
 const share = require('../core/share')
 const api = require('../shared/services/cloudApi')
 const rivals = require('../shared/services/rivals')
+const aiTune = require('../shared/services/aiTune')
 const { MIN_PLANES, MAX_PLANES } = require('../shared/config/rules')
 
 class Lobby extends Scene {
@@ -108,6 +109,9 @@ class Lobby extends Scene {
 
     if (!api.isCloud) {
       g.tipY = y
+      // 整条提示都可点 —— 提示条说的正是「对手是本地 AI」，
+      // 把它当成 AI 调参入口，比在别处另加一个按钮更符合语义，也不占新的一行
+      this.zone(x, y, w, gap(52), this.onAiTune.bind(this))
       y += gap(50) + gap(40)
     }
 
@@ -199,7 +203,10 @@ class Lobby extends Scene {
     draw.fillRect(ctx, g.x, g.subY + u(30), u(88), u(4), c.primary, u(2))
 
     if (g.tipY != null) {
-      ui.modeTip(ctx, L, g.x, g.tipY, g.w, '离线试玩模式 · 对手由本地 AI 扮演')
+      // 右侧显示当前强度等级：不用点进去也知道现在对面有多难
+      ui.modeTip(ctx, L, g.x, g.tipY, g.w, '离线试玩 · 对手是本地 AI', {
+        action: aiTune.level().name + ' · 调节'
+      })
     }
 
     /* ---- 快速匹配 ---- */
@@ -277,6 +284,11 @@ class Lobby extends Scene {
   /** 再邀最近对手：建房并带到房间页，由用户点「邀请好友」分享 */
   onReinvite() {
     this.app.go('room', { mode: 'create', auto: true, rival: this.rivalName })
+  }
+
+  /** 离线 AI 调参（测试期用，免得改参数还要重传代码包） */
+  onAiTune() {
+    this.app.go('ai-tune')
   }
 
   onRules() {

@@ -55,7 +55,8 @@ const app = createApp({
     room: require('../minigame/js/scenes/room'),
     deploy: require('../minigame/js/scenes/deploy'),
     battle: require('../minigame/js/scenes/battle'),
-    result: require('../minigame/js/scenes/result')
+    result: require('../minigame/js/scenes/result'),
+    'ai-tune': require('../minigame/js/scenes/ai-tune')
   }
 })
 
@@ -150,6 +151,13 @@ async function main() {
   app.replace('room', { mode: 'create' })
   await sleep(20)
   files.push(save('3-room-create', capture()))
+
+  // ③b 离线 AI 调参（测试期用；只影响单机对手）
+  const aiTune = require('../minigame/js/shared/services/aiTune')
+  aiTune.reset()
+  app.replace('ai-tune')
+  await sleep(20)
+  files.push(save('3b-ai-tune', capture()))
 
   // ④ 布阵：走离线引擎建一间 2 架房，房主直接进布阵
   offline.setDelays({ opponentJoin: 20, matchJoin: 20, ready: 20, foeAction: 60000 })

@@ -52,6 +52,28 @@ function strokeCircle(ctx, cx, cy, radius, color, width) {
   ctx.stroke()
 }
 
+/**
+ * 一批同样大小的小圆点，**只 fill 一次**
+ *
+ * 棋盘上 81 格要各点一个微点。逐格 circle() 就是 81 次 beginPath + fill，
+ * 双棋盘每帧 160+ 次调用 —— 在真机上这个量级是能感觉到的。
+ * 全部塞进一条路径只 fill 一次：视觉完全一样，调用数从 162 降到 2。
+ *
+ * moveTo 到圆弧起点 (cx + r, cy) 是必须的：arc() 会从「当前点」连一条线到弧起点，
+ * 不先 moveTo 就会画出一堆横穿格子的连线。
+ * @param {Array<{x:number,y:number}>} pts
+ */
+function dotGrid(ctx, pts, r, color) {
+  if (!pts || !pts.length) return
+  ctx.fillStyle = color
+  ctx.beginPath()
+  for (let i = 0; i < pts.length; i++) {
+    ctx.moveTo(pts[i].x + r, pts[i].y)
+    ctx.arc(pts[i].x, pts[i].y, r, 0, Math.PI * 2)
+  }
+  ctx.fill()
+}
+
 /** 直线 */
 function line(ctx, x1, y1, x2, y2, color, width) {
   ctx.strokeStyle = color
@@ -188,7 +210,7 @@ function background(ctx, layout) {
 }
 
 module.exports = {
-  roundRectPath, fillRect, strokeRect, circle, strokeCircle,
+  roundRectPath, fillRect, strokeRect, circle, strokeCircle, dotGrid,
   line, dashedLine, text, measure, ellipsis,
   vGradient, radarGrid, panelSheen, background
 }

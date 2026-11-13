@@ -252,7 +252,7 @@ class Battle extends Scene {
     const showFire = this.myTurn && !this.finished
     const fireH = showFire ? u(92) + u(16) : 0
 
-    const padOuter = u(14)
+    const padOuter = u(Board.PAD)
     const titleH = u(36)
     const gap = u(16)
     const remain = L.H - top - u(16) - bottomH - fireH
@@ -435,8 +435,11 @@ class Battle extends Scene {
       }
     }
 
+    // 投降是不可逆的坏消息，但它不该和「邀请好友」抢同一档视觉重量：
+    // 红底红框的实心按钮放在最常用操作的旁边，等于每局都在劝玩家按它。
+    // 降成灰底 + 红字 —— 想找的人找得到，不想找的人不会误触。
     Button.render(ctx, Object.assign({}, g.surrenderBtn, {
-      label: '投降', kind: 'danger', disabled: this.finished
+      label: '投降', kind: 'ghost', color: c.dangerDark, disabled: this.finished
     }), u)
     Button.render(ctx, Object.assign({}, g.inviteBtn, { label: '邀请好友', kind: 'outline' }), u)
 
@@ -468,13 +471,10 @@ class Battle extends Scene {
     draw.text(ctx, o.tag, this.layoutInfo.W - u(40), block.top + u(18), {
       size: u(theme.size.tiny), color: c.textMuted, align: 'right'
     })
-    if (o.focus) {
-      const tw = draw.measure(ctx, '焦点', u(theme.size.tiny)) + u(24)
-      draw.fillRect(ctx, u(40) + draw.measure(ctx, o.title, u(theme.size.small), 500) + u(14),
-        block.top + u(18) - u(18), tw, u(36), c.primaryLight, u(18))
-      draw.text(ctx, '焦点', u(40) + draw.measure(ctx, o.title, u(theme.size.small), 500) + u(14) + tw / 2,
-        block.top + u(18), { size: u(theme.size.tiny), color: c.primaryDark, align: 'center' })
-    }
+    // 这里原来挂一枚「焦点」徽章，表示「这块盘现在是放大的那块」。
+    // 删掉的理由：它解释的是**实现状态**，不是玩家的事 —— 哪块盘大，
+    // 一眼就看得出来；而玩家真正需要的「现在轮到你，点格子选目标」，
+    // 底部那一行已经写了。多一个看不懂的词只会占走注意力。
 
     Board.render(ctx, {
       x: board.x, y: board.y, size: board.size,

@@ -153,6 +153,32 @@ class Room extends Scene {
       let cardH = u(200)
       if (this.mode === 'join') cardH = u(240)
       if (this.mode === 'create') cardH = u(574) + (this.usePassword ? u(76) : 0)
+
+      // 卡片和主按钮之间通常剩一截，屏幕越高剩得越多（390×844 上是 370px）。
+      // 原来这一截全堆在卡片下面，下半屏一整片空网格 —— 像表单没写完。
+      //
+      // 试过纯居中：四行设置撑不起一屏，卡片会飘在中间，上下各挂一个洞，比原来更散。
+      // 所以分两步：① 余量先让**卡片自己长高**（行距拉开），把表单填满这一段；
+      //             ② 长高之后还剩的，再折一半放到卡片上方（封顶），让顶部不至于太空。
+      //
+      // 两个必须封顶的地方：
+      //   · 长高量用**含密码行**的高度算 —— 平板上卡片本来就快挨到按钮了，
+      //     一开私密开关（+76）就会压上去。
+      //   · 上移量同理，否则大屏上卡片会离标题太远。
+      const baseH = this.mode === 'create' ? u(574) : cardH
+      const maxH = this.mode === 'create' ? u(574) + u(76) : cardH
+      const actionTop = L.H - L.safeBottom - u(24) - btnH
+      // 卡片底与主按钮之间留一指宽（u(56)）：按钮是拇指区，卡片贴上去会显得在抢位置
+      const limit = actionTop - u(56)
+      const spare = Math.max(0, limit - (y + baseH))
+      const stretch = this.mode === 'create'
+        ? Math.min(spare * 0.55, u(220), Math.max(0, limit - y - maxH))
+        : 0
+      const topGap = Math.min(Math.max(0, spare - stretch) * 0.5, u(140),
+        Math.max(0, limit - y - maxH - stretch))
+      y += topGap
+      cardH += stretch
+
       g.card = { x: x, y: y, w: w, h: cardH }
 
       if (this.mode === 'join') {
@@ -163,10 +189,13 @@ class Room extends Scene {
       } else if (this.mode === 'create') {
         // 四行设置，从上往下是「别人怎么找到我 → 打多大的一局 → 打多快 → 谁能进来」，
         // 也就是从公开到私密逐级收紧。
+        //
+        // 这几行按权重吃 stretch：房间名那行不动（它贴着卡片上沿，位置最稳），
+        // 越往下吃得越多 —— 下面的行本来就更靠下，一起拉开才不会挤成上密下疏。
         g.nameY = y + u(64)
-        g.planeY = y + u(164)
-        g.stepY = y + u(268)
-        g.privY = y + u(452)
+        g.planeY = y + u(164) + stretch * 0.18
+        g.stepY = y + u(268) + stretch * 0.5
+        g.privY = y + u(452) + stretch
         g.hintY = y + cardH - u(28)
 
         // ① 房间名：整行可点，弹输入框改
@@ -211,7 +240,7 @@ class Room extends Scene {
 
         if (this.usePassword) {
           // 固定跟在上一次开关之后的行位置，卡片高度一变密码行跟着下移，不会压到提示
-          g.pwdY = y + u(512)
+          g.pwdY = y + u(512) + stretch
           this.zone(x, g.pwdY - u(40), w, u(80), this.onEditRoomPassword.bind(this))
         }
       } else {
@@ -344,10 +373,10 @@ class Room extends Scene {
         Slider.render(ctx, u, g.stepSlider, {
           value: this.stepSeconds, min: TURN_MIN, max: TURN_MAX
         })
-        draw.text(ctx, '超时自动轰炸一格 · 连续 5 次判负', lx, g.stepY + u(112), {
+        draw.text(ctx, '超时自动轰炸一格 · 连续 5 次判负', lx, g.stepY + u(120), {
           size: u(theme.size.tiny), color: c.textMuted
         })
-        draw.line(ctx, lx, g.stepY + u(140), rx, g.stepY + u(140), c.border, 1)
+        draw.line(ctx, lx, g.stepY + u(146), rx, g.stepY + u(146), c.border, 1)
 
         // ④ 私密开关
         draw.text(ctx, this.usePassword ? '私密房间（需要密码）' : '公开房间（无需密码）', lx, g.privY, {

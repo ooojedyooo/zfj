@@ -57,12 +57,16 @@ function render(ctx, u, rect, o) {
   draw.strokeCircle(ctx, knobX, cy, u(KNOB_R) - 1, c.primary, 3)
   draw.circle(ctx, knobX, cy, u(KNOB_R - 12), c.primary)
 
-  // 两端刻度：滑块不给范围，玩家不知道能拖到哪
+  // 两端刻度：滑块不给范围，玩家不知道能拖到哪。
+  // 带上单位 —— 「5 / 30」在「每步限时」这一行下面，很容易被读成「第 5 档 / 第 30 档」，
+  // 或者干脆不知道单位是什么。
   if (o.showScale !== false) {
-    draw.text(ctx, String(o.min), x0, cy + u(KNOB_R) + u(14), {
+    // 贴近轨道而不是远远吊在下面：轨道和刻度读成一组，才像「这条线的两端」
+    const ly = cy + u(KNOB_R) + u(8)
+    draw.text(ctx, o.min + ' 秒', x0, ly, {
       size: u(theme.size.tiny), color: c.textMuted, align: 'center'
     })
-    draw.text(ctx, String(o.max), x1, cy + u(KNOB_R) + u(14), {
+    draw.text(ctx, o.max + ' 秒', x1, ly, {
       size: u(theme.size.tiny), color: c.textMuted, align: 'center'
     })
   }

@@ -363,7 +363,7 @@ class Deploy extends Scene {
     const g = this.geo = {}
     const x = u(32)
     const w = L.W - u(64)
-    const pad = u(14)
+    const pad = u(Board.PAD)
 
     g.x = x
     g.w = w
@@ -377,12 +377,31 @@ class Deploy extends Scene {
     const bottomH = L.safeBottom + u(24) + btnH + u(20) + opsH + u(20) + statusH
 
     // 棋盘：先按宽度定，再按剩余高度收敛（宽度通常是瓶颈，格子越大越好点）
-    const availH = L.H - (g.barY + u(52)) - u(30) - bottomH
+    //
+    // 高度预算里那一段「棋盘 → 状态条」必须和下面 statusY 用同一个式子（pad*2 + u(20)）。
+    // 以前这里是写死的 u(30)，底板一加厚（坐标刻度要位置）就不够了 ——
+    // 平板上直接把操作栏压进就绪按钮 14px。
+    const boardBottomGap = pad * 2 + u(20)
+    const availH = L.H - (g.barY + u(52)) - boardBottomGap - bottomH
     const byW = w - pad * 2
     const size = Math.max(u(270), Math.min(byW, availH))
-    g.board = { x: x + (w - size) / 2, y: g.barY + u(52), size: size }
+    const y0 = g.barY + u(52)
 
-    g.statusY = g.board.y + size + pad * 2 + u(20)
+    // 竖屏上 9×9 棋盘是被**屏宽**卡住的（byW < availH），纵向永远剩一截。
+    // 这一截原来全堆在操作栏和就绪按钮之间，屏幕下半部空两百多像素。
+    //
+    // 试过把它整体居中：棋盘一离开顶部标题就"飘"起来，比原来更散。
+    // 现在的做法是只松「棋盘 → 状态条 → 操作栏」这两段间距（各封顶 u(48)），
+    // 让这一组自己长下来，剩下的留在就绪按钮上方 —— 那一块是拇指区，空着反而好按。
+    const groupH = size + boardBottomGap + statusH + u(20) + opsH
+    const spare = Math.max(0, (L.H - L.safeBottom - u(24) - btnH) - (y0 + groupH))
+    const stretch = Math.min(spare * 0.3, u(48))
+    const gapBoard = boardBottomGap + stretch
+    const gapOps = u(20) + stretch
+
+    g.board = { x: x + (w - size) / 2, y: y0, size: size }
+
+    g.statusY = g.board.y + size + gapBoard
     g.statusH = statusH
 
     // 状态条里的飞机棋子：**数量 = 本局架数**，点它加入 / 收起 / 选中
@@ -410,7 +429,7 @@ class Deploy extends Scene {
       }, this)
     }
 
-    g.opsY = g.statusY + statusH + u(20)
+    g.opsY = g.statusY + statusH + gapOps
     g.opsH = opsH
     const ops = Button.rowRects(x, g.opsY, w, opsH, u(16), 3)
     g.opRects = ops
@@ -749,12 +768,15 @@ class Deploy extends Scene {
     // 「收起」可逆（位置和朝向都记着，点虚线条就能展开），所以不给危险色。
     // 危险色应该留给真的不可逆的动作，滥用会让玩家对红色麻木。
     const labels = ['旋转', hasSel2 ? '收起这架' : '随机布阵', '清空']
-    const kinds = ['outline', 'outline', 'outline']
+    // 「清空」是唯一不可逆的动作（整盘重来），不能和「旋转」长得一样。
+    // 降成灰底 + 红字：位置还在原来的地方（肌肉记忆不用改），但视觉上退到最暗一档。
+    const kinds = ['outline', 'outline', 'ghost']
+    const colors = [null, null, theme.color.dangerDark]
     const disabled = this.waiting || this.readying
     g.opRects.forEach(function (r, i) {
       Button.render(ctx, {
         x: r.x, y: r.y, w: r.w, h: r.h,
-        label: labels[i], kind: kinds[i], disabled: disabled
+        label: labels[i], kind: kinds[i], color: colors[i], disabled: disabled
       }, u)
     })
 

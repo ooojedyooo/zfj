@@ -34,7 +34,16 @@ const draw = require('../core/draw')
 const { BOARD_SIZE } = require('../shared/config/rules')
 
 /** 底板内边距（设计稿单位） */
-const PAD = 14
+const PAD = 22
+
+/**
+ * 「细节层」的最低格子尺寸（刻度 / 空格微点都看它）。
+ *
+ * 11px 的格子（对战页那张缩小后的我方海域）里，刻度数字会和格线糊成一片、
+ * 81 个微点会变成一片麻点，反而都是噪声。缩略盘的角色只是
+ * 「看一眼还剩几架完好」，不需要读数，也不需要「这里能点」。
+ */
+const AXIS_MIN_CELL = 22
 
 /** 计算格边长等度量 */
 function metrics(o) {
@@ -154,6 +163,56 @@ function hatch(ctx, x, y, size, color, width) {
   draw.line(ctx, x + size - p, y + p, x + p, y + size - p, color, width)
 }
 
+/**
+ * 命中：橙色爆点 + 四向短芒
+ *
+ * 原来只是一个橙色实心圆 —— 在密网格里和「一个色块」没有区别。
+ * 加上四向短芒之后它有了方向性，读起来是「这一格被炸开了」，
+ * 而不是「这一格被涂成了橙色」。
+ */
+function burst(ctx, cx, cy, cell, color) {
+  const r = cell * 0.2
+  draw.circle(ctx, cx, cy, r, color)
+  const gap = cell * 0.23
+  const len = cell * 0.1
+  const w = Math.max(1, cell * 0.055)
+  draw.line(ctx, cx, cy - gap, cx, cy - gap - len, color, w)
+  draw.line(ctx, cx, cy + gap, cx, cy + gap + len, color, w)
+  draw.line(ctx, cx - gap, cy, cx - gap - len, cy, color, w)
+  draw.line(ctx, cx + gap, cy, cx + gap + len, cy, color, w)
+}
+
+/**
+ * 双轴刻度 1-9
+ *
+ * 这一条不是装饰。游戏里「横3，竖4」是唯一的书面报点口径：
+ * 超时自动轰炸会播报「已自动轰炸 横3，竖4」，战报、复盘、口头邀战也全用它。
+ * 盘上没有刻度，那句话就是一串读不懂的数字。
+ *
+ * 画在底板往外扩出来的那一圈环带上（见 PAD），**不占棋盘本体的尺寸** ——
+ * 格子边长一像素都不会变小，触控精度不受影响。
+ *
+ * 环带中心 = pad * 0.5，所以数字距棋盘边 5~6px，永远压不到格线。
+ */
+function drawAxis(ctx, m, pad) {
+  const cell = m.cell
+  if (cell < AXIS_MIN_CELL) return
+  const color = theme.color.axisText
+  const fs = Math.max(9, Math.min(13, cell * 0.3))
+  const ring = pad * 0.5
+
+  for (let i = 1; i <= BOARD_SIZE; i++) {
+    // 行号：左侧环带，垂直居中于该行
+    draw.text(ctx, String(i), m.x - ring, m.y + (i - 0.5) * cell, {
+      size: fs, color: color, align: 'center', baseline: 'middle'
+    })
+    // 列号：底部环带，水平居中于该列
+    draw.text(ctx, String(i), m.x + (i - 0.5) * cell, m.y + m.size + ring, {
+      size: fs, color: color, align: 'center', baseline: 'middle'
+    })
+  }
+}
+
 /** 绘制棋盘（render 阶段） */
 function render(ctx, o, u) {
   const m = metrics(o)
@@ -182,20 +241,29 @@ function render(ctx, o, u) {
   // 外圈再压一道，棋盘边界更实在
   draw.strokeRect(ctx, m.x, m.y, m.size, m.size, c.boardFrame, 0, 1.5)
 
+  // 双轴刻度（画在底板外圈环带里，不占棋盘尺寸）
+  drawAxis(ctx, m, pad)
+
   // 内部留缝不要太大，否则 10 格飞机会被切成 10 个小方块、看不出是一架飞机
   const inset = Math.max(0.5, cell * 0.03)
   const dim = o.dim || {}
+  // 空格收集起来最后一次性点完（见 draw.dotGrid 的性能说明）
+  const empties = []
 
   for (let r = 1; r <= BOARD_SIZE; r++) {
     const row = (o.cells && o.cells[r - 1]) || []
     for (let col = 1; col <= BOARD_SIZE; col++) {
       const info = normCell(row[col - 1])
-      if (!info) continue
-
       const x = m.x + (col - 1) * cell
       const y = m.y + (r - 1) * cell
       const cx = x + cell / 2
       const cy = y + cell / 2
+
+      if (!info) {
+        empties.push({ x: cx, y: cy })
+        continue
+      }
+
       const state = info.s
 
       if (state === 'plane' || state === 'head') {
@@ -270,14 +338,28 @@ function render(ctx, o, u) {
         }
       } else if (state === 'hit') {
         draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, c.hitLight, cell * 0.1)
-        draw.circle(ctx, cx, cy, cell * 0.26, c.hit)
+        burst(ctx, cx, cy, cell, c.hit)
       } else if (state === 'kill') {
         draw.fillRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, c.danger, cell * 0.1)
-        draw.circle(ctx, cx, cy, cell * 0.22, '#FFFFFF')
+        // 白色叉：整格红底 + 一道叉，读作「这架没了」。
+        // 原来是一个白点 —— 白点更像「这里有个东西」，而不是「这里结束了」。
+        const q = cell * 0.26
+        const kw = Math.max(1.6, cell * 0.1)
+        draw.line(ctx, x + q, y + q, x + cell - q, y + cell - q, '#FFFFFF', kw)
+        draw.line(ctx, x + cell - q, y + q, x + q, y + cell - q, '#FFFFFF', kw)
       } else if (state === 'miss') {
-        draw.circle(ctx, cx, cy, cell * 0.18, c.miss)
+        // 空炸：实心点 + 外环。外环是「这一格已经处理过」的边界 ——
+        // 没有它，一个 4px 的圆点在密网格里会被误认成格线交点。
+        draw.strokeCircle(ctx, cx, cy, cell * 0.3, c.missRing, 1)
+        draw.circle(ctx, cx, cy, cell * 0.155, c.miss)
       }
     }
+  }
+
+  // 空格微点：一次 fill 画完 81 格，告诉玩家「这一格是可以点的」。
+  // 缩略盘（格子 11px）不画 —— 81 个点挤在 100px 里不是纹理，是一片麻点。
+  if (cell >= AXIS_MIN_CELL) {
+    draw.dotGrid(ctx, empties, Math.max(0.9, cell * 0.035), c.cellDot)
   }
 
   // 选中高亮（单格，仅敌方棋盘点选用）
@@ -336,4 +418,7 @@ function render(ctx, o, u) {
   }
 }
 
-module.exports = { layout, render, cellRect, cellAt, metrics, outerRect, normCell, BOARD_SIZE }
+module.exports = {
+  layout, render, cellRect, cellAt, metrics, outerRect, normCell,
+  BOARD_SIZE, PAD
+}

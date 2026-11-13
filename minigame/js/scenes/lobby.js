@@ -23,6 +23,44 @@ const rivals = require('../shared/services/rivals')
 const aiTune = require('../shared/services/aiTune')
 const { MIN_PLANES, MAX_PLANES } = require('../shared/config/rules')
 
+/**
+ * 三张匹配卡里的飞机阵 —— 画几架，就是几架的局。
+ *
+ * 原来三张卡画的是**同一架**飞机，唯一的区别是下面那行「1 架 / 2 架 / 3 架」。
+ * 图形一样，等于卡片上半部分没有任何信息量，玩家得靠读小字才知道点下去是多大一局。
+ * 现在 1 架居中、2 架并排、3 架品字，**先看到数量，再看到数字**。
+ *
+ * @param {Object} box 图标可用区域 {x,y,w,h}
+ * @param {number} n 架数
+ */
+function drawPlaneSet(ctx, box, n, u, c) {
+  const opt = { on: true, rotation: 1, color: c.plane, headColor: c.planeHead, join: true }
+  const cx = box.x + box.w / 2
+  const cy = box.y + box.h / 2
+  const gap = u(6)
+
+  if (n <= 1) {
+    const s = Math.min(box.w, box.h)
+    planeIcon.render(ctx, cx - s / 2, cy - s / 2, s, opt)
+    return
+  }
+
+  if (n === 2) {
+    // 并排：单架宽度 = (总宽 - 间距) / 2，高度不够时按高度收
+    const s = Math.min((box.w - gap) / 2, box.h)
+    planeIcon.render(ctx, cx - s - gap / 2, cy - s / 2, s, opt)
+    planeIcon.render(ctx, cx + gap / 2, cy - s / 2, s, opt)
+    return
+  }
+
+  // 3 架：上两架、下一架（品字）。一字排开会挤成三根筷子，品字才读得出「三架」
+  const s = Math.min((box.w - gap) / 2, (box.h - gap) / 2)
+  const topY = cy - s - gap / 2
+  planeIcon.render(ctx, cx - s - gap / 2, topY, s, opt)
+  planeIcon.render(ctx, cx + gap / 2, topY, s, opt)
+  planeIcon.render(ctx, cx - s / 2, cy + gap / 2, s, opt)
+}
+
 class Lobby extends Scene {
   constructor(app) {
     super(app)
@@ -224,11 +262,10 @@ class Lobby extends Scene {
       // 原来写死 r.h - u(74)，卡片一矮图标就只剩三十几像素，卡片显得空。
       const textH = u(56)
       const boxH = r.h - textH - u(16)
-      const s = Math.min(r.w - u(24), boxH)
-      planeIcon.render(ctx, r.x + (r.w - s) / 2, r.y + u(12) + (boxH - s) / 2, s, {
-        on: true, rotation: 1, color: c.plane, headColor: c.planeHead, join: true
-      })
-      // 架数用 h2 大字 + 小号「架」：三张卡图形一样，数字就是唯一区别，必须够显眼
+      drawPlaneSet(ctx, {
+        x: r.x + u(14), y: r.y + u(12) + u(4), w: r.w - u(28), h: boxH - u(8)
+      }, r.planes, u, c)
+      // 架数用 h2 大字 + 小号「架」：图形负责「一眼看出几架」，数字负责「确认」
       const numSize = u(theme.size.h2)
       const unitSize = u(theme.size.small)
       const nw = draw.measure(ctx, String(r.planes), numSize, 500)
@@ -276,9 +313,13 @@ class Lobby extends Scene {
       size: u(theme.size.body), color: c.primary, align: 'center'
     })
 
-    draw.text(ctx, '玩家标识 ' + this.app.globalData.playerId, L.W / 2, g.footY, {
-      size: u(theme.size.tiny), color: c.textMuted, align: 'center'
-    })
+    // 玩家标识是开发期的对号入座工具（两台机器上分清谁是谁），
+    // 正式包里 USE_CLOUD=true，这一行就不该出现 —— 玩家不关心自己的 openid。
+    if (!api.isCloud) {
+      draw.text(ctx, '玩家标识 ' + this.app.globalData.playerId, L.W / 2, g.footY, {
+        size: u(theme.size.tiny), color: c.textMuted, align: 'center'
+      })
+    }
   }
 
   /** 再邀最近对手：建房并带到房间页，由用户点「邀请好友」分享 */

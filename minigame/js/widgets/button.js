@@ -35,23 +35,33 @@ function layout(scene, o) {
  */
 function render(ctx, o, u) {
   const toPx = typeof u === 'function' ? u : function (v) { return v * 0.5 }
-  const k = KINDS[o.kind || 'primary'] || KINDS.primary
+  const kind = o.kind || 'primary'
+  const k = KINDS[kind] || KINDS.primary
   // 圆角也必须换算：theme.radius 是设计稿单位，直接当像素用的话
   // 375 屏上会画成 16px（设计意图 12px），平板上又缩不回去。
   // 取 lg 与卡片同一档，按钮和卡片才是同一个圆度体系。
   const r = o.radius != null ? o.radius : toPx(theme.radius.lg)
-  const prev = ctx.globalAlpha
-  ctx.globalAlpha = o.disabled ? 0.45 : (o.pressed ? 0.8 : 1)
 
-  draw.fillRect(ctx, o.x, o.y, o.w, o.h, o.bg || k.bg, r)
+  // 禁用态分两种处理，因为「亮」和「不亮」的按钮在深色界面上失效方式不同：
+  //   primary 是整屏唯一亮起来的元素（创建房间 / 发射 / 就绪）。只降透明度的话
+  //   它仍然是青色的一整块，真机上大量反馈是「看着能点，点了没反应」。
+  //   所以它整块换成灰底 + 灰字 —— 形状在、颜色退，一眼就知道这一步还不能走。
+  //   其他 kind 本来就不发光，降透明度就够了，也保住了 warn（橙=还没准备好）的语义。
+  const disabled = !!o.disabled
+  const grayOut = disabled && kind === 'primary' && !o.bg
+
+  const prev = ctx.globalAlpha
+  ctx.globalAlpha = grayOut ? 1 : (disabled ? 0.45 : (o.pressed ? 0.8 : 1))
+
+  draw.fillRect(ctx, o.x, o.y, o.w, o.h, o.bg || (grayOut ? theme.color.gray : k.bg), r)
   // 顶部高光：暗底按钮靠这一条立起来；亮青底上几乎看不出，没有副作用
-  draw.panelSheen(ctx, o.x, o.y, o.w, r, 'rgba(255, 255, 255, 0.16)')
-  if (k.border && !o.bg) draw.strokeRect(ctx, o.x, o.y, o.w, o.h, k.border, r, 1)
+  if (!grayOut) draw.panelSheen(ctx, o.x, o.y, o.w, r, 'rgba(255, 255, 255, 0.16)')
+  if (k.border && !o.bg && !grayOut) draw.strokeRect(ctx, o.x, o.y, o.w, o.h, k.border, r, 1)
 
   const label = o.loading ? (o.loadingText || '处理中…') : o.label
   draw.text(ctx, label, o.x + o.w / 2, o.y + o.h / 2, {
     size: o.size || toPx(theme.size.body),
-    color: o.color || k.fg,
+    color: grayOut ? theme.color.textFaint : (o.color || k.fg),
     weight: 500,
     align: 'center'
   })

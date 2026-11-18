@@ -107,17 +107,72 @@ function sample(count, n) {
   return { avg: ok ? total / ok : Infinity, ok: ok, n: n }
 }
 
+/* ---------------- 固定随机源：5 个种子 ----------------
+ *
+ * 这条强度断言原来是「跑 60 局，均值 ≤ 13」。实测均值约 11，余量 2 炮看起来合理，
+ * 但样本量其实是 **1** —— 抖的不是「60 次里的哪几次」，而是「这一次的世界」。
+ * 实测偶发红约 10~17%（连跑 12 次红 2 次，25 次红 1 次）。
+ *
+ * 单纯固定一个种子不算修：那只是把 17% 的随机失败换成一次固定答案，覆盖率归零，
+ * 而且下次改 AI 强度时，这条断言会因为「恰好那个世界」假绿或假红。
+ *
+ * 现在：5 个固定种子 × 每组 30 局，断言**中位数**，并把 5 个值全部打印。
+ * 为什么 5×30 而不是 1×60：5 个 30 局的中位数比 1 个 60 局可信，
+ * 因为抖的是「这一次的世界」，不是「60 次里的哪几次」。
+ * 另配一条宽的**单组上限** —— 中位数管趋势、上限管离群；
+ * 只有中位数的话，「5 组里 3 组烂、另 2 组很好」照样能绿。
+ */
+function withSeed(seed, fn) {
+  const real = Math.random
+  let s = seed >>> 0
+  Math.random = function () {
+    s = (s * 1664525 + 1013904223) >>> 0
+    return s / 4294967296
+  }
+  try { return fn() } finally { Math.random = real }
+}
+
+function median(xs) {
+  const a = xs.slice().sort(function (p, q) { return p - q })
+  const m = a.length >> 1
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2
+}
+
+const AI_SEEDS = [20261113, 20261114, 20261115, 20261116, 20261117]
+const GROUPS = AI_SEEDS.map(function (sd) {
+  return withSeed(sd, function () {
+    return { s1: sample(1, 30), s3: sample(3, 30) }
+  })
+})
+
+const a1 = GROUPS.map(function (g) { return g.s1.avg })
+const a3 = GROUPS.map(function (g) { return g.s3.avg })
+const max1 = Math.max.apply(null, a1)
+const max3 = Math.max.apply(null, a3)
+const med1 = median(a1)
+const med3 = median(a3)
+
 // ① 不许卡死：概率密度法一旦候选集合算空，就会返回 null 让对局挂住
-const s1 = sample(1, 60)
-const s3 = sample(3, 60)
-assert('1 架局 60 次全部打完（没有卡死）', s1.ok === s1.n)
-assert('3 架局 60 次全部打完（没有卡死）', s3.ok === s3.n)
+assert('5 个种子 × 30 局，1 架局全部打完（没有卡死）',
+  GROUPS.every(function (g) { return g.s1.ok === g.s1.n }))
+assert('5 个种子 × 30 局，3 架局全部打完（没有卡死）',
+  GROUPS.every(function (g) { return g.s3.ok === g.s3.n }))
 
 // ② 强度回归：钉住「已经变聪明了」这件事。
 //    改造前实测 1 架约 15 炮、3 架约 42 炮；现在约 11 / 29。
-//    阈值留了余量，只防「被改回旧实现」，不卡随机波动。
-assert('1 架局平均用炮 ≤ 13（改造前约 15）', s1.avg <= 13)
-assert('3 架局平均用炮 ≤ 34（改造前约 42）', s3.avg <= 34)
+//    阈值本身没动（余量 2 炮是合理的），改的是样本量。
+/* 打印**形状**和数字一样重要：只打「中位 11.17」会让人以为分布没问题，
+ * 而 5 个值里可能藏着 [11.0, 11.1, 11.2, 11.3, 15.9] 这种 —— 中位好看、上限擦线。
+ * 所以 5 个原始值逐个列出来，中位数与最大值单独标。 */
+const f1 = function (v) { return v.toFixed(1) }
+console.log('    1 架局 5 组：[' + a1.map(f1).join(' ') + '] 中位 ' + f1(med1) +
+  ' 最大 ' + f1(max1))
+console.log('    3 架局 5 组：[' + a3.map(f1).join(' ') + '] 中位 ' + f1(med3) +
+  ' 最大 ' + f1(max3))
+assert('1 架局中位数 ≤ 13（改造前约 15）', med1 <= 13)
+assert('1 架局任一组 ≤ 15（离群）', max1 <= 15)
+assert('3 架局中位数 ≤ 34（改造前约 42）', med3 <= 34)
+assert('3 架局任一组 ≤ 39（离群）', max3 <= 39)
 
 // ③ 不许打重复的格：炮数应等于去重后的格数
 const planes1 = randomDeploy(1, 'standard', BOARD_SIZE)

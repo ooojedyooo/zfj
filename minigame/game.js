@@ -91,9 +91,26 @@ share.onShare(function () {
   return { title: '炸飞机 · 9×9 双人实时对战，来跟我打一局', query: '' }
 })
 
+/* ---------------- 前后台切换 ---------------- */
+//
+// 小游戏切后台时系统会冻结渲染帧投递，rAF 基本不再回调，所以"白烧电"的风险很低。
+// 仍然显式 stop/start 是为了另外两件事：
+//   ① 回前台首帧的 dt 从 0 起算（start() 里 last = Date.now()），
+//      不会出现"切回来一次推进好几秒"的动效大跳；
+//   ② 回前台是一次天然的清理时机 —— 对局画面可能已经过期（battle.sync 只在
+//      onEnter 调一次），需要主动重同步。
+// 注：「切后台 rAF 是否立即停投」各基础库版本行为有差异，上面的两条理由
+//     不依赖这个假设，所以无论哪种行为都正确。
+if (wx.onHide) {
+  wx.onHide(function () {
+    app.stop()
+  })
+}
+
 /* ---------------- 从好友分享卡片二次进入 ---------------- */
 if (wx.onShow) {
   wx.onShow(function (res) {
+    app.start()            // 已在运行则是空操作（start 自带 _running 守卫）
     if (res && res.query && res.query.roomNo) {
       share.setLaunchQuery(res.query)
       app.go('room', { mode: 'join' })

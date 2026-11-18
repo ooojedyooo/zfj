@@ -1702,6 +1702,639 @@ async function main() {
     aiTune.reset()
   })
 
+  /* ================= [14] 飞机精美化：几何、朝向、绘制预算 ================= */
+  section('[14] 飞机精美化：几何、朝向、绘制预算')
+
+  /**
+   * 记录型 ctx —— 只记坐标，不画。
+   *
+   * 这一组要回答的不是「渲染会不会抛异常」（那早被别的用例覆盖了），而是
+   * **每个元素落在哪**：
+   *   ① 龙骨渐变的亮端必须永远朝机头 —— 这是「朝向被画进光照里」的全部实现，
+   *      4 向映射一旦有一向错了，这里立刻红；
+   *   ② 机头序号恒正立、恒落在机头格中心 —— 它是「第几架」的权威通道；
+   *   ③ 精美化不许把绘制调用数做上去（「8 格合批」是净 +2/净 0 的全部前提，
+   *      没有这条，13 层装饰会变成 +60）。
+   */
+  function recorder() {
+    const out = {
+      pts: [], rects: [], grads: [], texts: [], batches: 0,
+      paths: [], cur: [], radii: [], fills: [], arcs: 0, strokes: []
+    }
+    const push = function (x, y) {
+      out.pts.push({ x: x, y: y })
+      out.cur.push({ x: x, y: y })
+    }
+    out.ctx = {
+      fillStyle: '#000000', strokeStyle: '#000000', lineWidth: 1,
+      font: '10px sans-serif', textAlign: 'left', textBaseline: 'middle', globalAlpha: 1,
+      save: function () {}, restore: function () {},
+      scale: function () {}, setTransform: function () {}, translate: function () {},
+      rotate: function () {}, clearRect: function () {},
+      beginPath: function () { out.cur = []; out.radii = [] },
+      closePath: function () {},
+      moveTo: push, lineTo: push,
+      // arcTo 的半径要单独记：机头↔机身是内部边，那两个底角必须是 0（直角）
+      arcTo: function (x1, y1, x2, y2, r) { out.radii.push(r || 0); push(x1, y1) },
+      arc: function (x, y) { out.arcs++; push(x, y) },
+      fillRect: function (x, y, w, h) {
+        out.rects.push({ x: x, y: y, w: w, h: h, style: this.fillStyle })
+        push(x, y); push(x + w, y + h); out.batches++
+      },
+      strokeRect: function (x, y, w, h) {
+        push(x, y); push(x + w, y + h); out.batches++
+      },
+      fill: function () {
+        out.paths.push(out.cur)
+        out.fills.push({ style: this.fillStyle, pts: out.cur.length, radii: out.radii.slice() })
+        out.batches++
+      },
+      stroke: function () { out.strokes.push(out.cur); out.batches++ },
+      fillText: function (s, x, y) {
+        out.texts.push({ s: String(s), x: x, y: y }); push(x, y); out.batches++
+      },
+      measureText: function (s) { return { width: String(s).length * 8 } },
+      createLinearGradient: function (x0, y0, x1, y1) {
+        const g = { x0: x0, y0: y0, x1: x1, y1: y1, addColorStop: function () {} }
+        out.grads.push(g)
+        return g
+      }
+    }
+    return out
+  }
+
+  const C14 = 40
+  const BX = 100
+  const BY = 100
+
+  /** 铺一张 9×9 空盘，把给定的几架飞机填进去并渲染，返回记录结果 */
+  function probePlanes(defs, withPlanes, extra, cellSize) {
+    const C = cellSize || C14
+    const rec = recorder()
+    const cells = []
+    for (let r = 0; r < 9; r++) {
+      const row = []
+      for (let c = 0; c < 9; c++) row.push('')
+      cells.push(row)
+    }
+    const planes = defs.map(function (d) {
+      const abs = getAbsoluteCells('standard', d.row, d.col, d.rot)
+      abs.forEach(function (cl) {
+        cells[cl.row - 1][cl.col - 1] = { s: cl.isHead ? 'head' : 'plane', p: d.p || 0 }
+      })
+      return { p: d.p || 0, rotation: d.rot, cells: abs }
+    })
+    const opt = { x: BX, y: BY, size: 9 * C, cells: cells }
+    if (withPlanes) opt.planes = planes
+    if (extra) Object.assign(opt, extra)
+    Board.render(rec.ctx, opt, function (v) { return v })
+    return { rec: rec, planes: planes }
+  }
+
+  function headCenterOf(plane) {
+    for (let i = 0; i < plane.cells.length; i++) {
+      const c = plane.cells[i]
+      if (c.isHead) {
+        return { x: BX + (c.col - 0.5) * C14, y: BY + (c.row - 0.5) * C14 }
+      }
+    }
+    return null
+  }
+
+  check('4 个朝向：龙骨渐变的亮端永远朝机头', function () {
+    for (let rot = 0; rot < 4; rot++) {
+      const p = probePlanes([{ row: 5, col: 5, rot: rot }], true)
+      // 整幅画面里只有龙骨一处渐变，所以 grads[0] 就是它
+      assert.strictEqual(p.rec.grads.length, 1, 'rot' + rot + ' 渐变数量不是 1（' + p.rec.grads.length + '）')
+      const g = p.rec.grads[0]
+      const hc = headCenterOf(p.planes[0])
+      const d0 = Math.hypot(g.x0 - hc.x, g.y0 - hc.y)   // 亮端（stop 0）
+      const d1 = Math.hypot(g.x1 - hc.x, g.y1 - hc.y)   // 机尾端
+      assert.ok(d0 < d1, 'rot' + rot + ' 龙骨亮端不在机头侧：d0=' + d0.toFixed(1) + ' d1=' + d1.toFixed(1))
+      // 亮端就在机头格里（半个格内），机尾端跨满 4 格（约 3.5 格）
+      assert.ok(d0 < C14 * 0.6, 'rot' + rot + ' 亮端离机头太远：' + d0.toFixed(1))
+      assert.ok(d1 > C14 * 2.8, 'rot' + rot + ' 渐变没有纵贯 4 格：' + d1.toFixed(1))
+    }
+  })
+
+  check('4 个朝向：机头序号恒正立、恒落在机头格中心', function () {
+    for (let rot = 0; rot < 4; rot++) {
+      const p = probePlanes([{ row: 5, col: 5, rot: rot, p: 1 }], true)
+      const hc = headCenterOf(p.planes[0])
+      // 只取棋盘**内部**的文字：1~9 的双轴刻度里也有 "2"，得先把刻度排除掉
+      const inner = p.rec.texts.filter(function (t) {
+        return t.x > BX && t.x < BX + 9 * C14 && t.y > BY && t.y < BY + 9 * C14
+      })
+      assert.strictEqual(inner.length, 1, 'rot' + rot + ' 棋盘内文字数量不是 1（' + inner.length + '）')
+      assert.strictEqual(inner[0].s, '2', 'rot' + rot + ' 序号不是 "2"（p=1）')
+      assert.ok(Math.abs(inner[0].x - hc.x) < 0.01 && Math.abs(inner[0].y - hc.y - C14 * 0.02) < 0.01,
+        'rot' + rot + ' 序号没落在机头格中心：(' + inner[0].x.toFixed(1) + ',' +
+        inner[0].y.toFixed(1) + ') 期望 (' + hc.x + ',' + (hc.y + C14 * 0.02) + ')')
+    }
+  })
+
+  check('飞机所有绘制元素都不出棋盘（含底板外沿与投影）', function () {
+    const p = probePlanes([
+      { row: 1, col: 3, rot: 0 },
+      { row: 7, col: 1, rot: 3 },
+      { row: 9, col: 7, rot: 2 }
+    ], true)
+    const pad = Board.PAD
+    const x0 = BX - pad
+    const y0 = BY - pad
+    const x1 = BX + 9 * C14 + pad
+    // 底板下方还有一块偏移 pad*0.5 的投影块（draw.js 用它替代 shadowBlur）
+    const y1 = BY + 9 * C14 + pad * 1.5
+    p.rec.pts.forEach(function (q) {
+      assert.ok(q.x >= x0 - 0.01 && q.x <= x1 + 0.01,
+        '有元素横向跑到棋盘外：x=' + q.x.toFixed(1))
+      assert.ok(q.y >= y0 - 0.01 && q.y <= y1 + 0.01,
+        '有元素纵向跑到棋盘外：y=' + q.y.toFixed(1))
+    })
+  })
+
+  check('精美化不增加绘制调用（8 格合批必须生效）', function () {
+    const defs = [
+      { row: 1, col: 3, rot: 0 },
+      { row: 7, col: 1, rot: 3 },
+      { row: 9, col: 7, rot: 2 }
+    ]
+    const oldWay = probePlanes(defs, false).rec.batches
+    const newWay = probePlanes(defs, true).rec.batches
+    assert.ok(newWay <= oldWay,
+      '精美化之后调用数反而变多了：旧 ' + oldWay + ' → 新 ' + newWay +
+      '（说明 8 个机体格没有合成一条路径）')
+  })
+
+  check('planes 缺省时完全退回逐格老画法（不画龙骨）', function () {
+    // 龙骨渐变是精美化通道独有的特征：0 处 = 确实走了老画法。
+    // 这条保证「新路径坏掉时老路径还在」，而不是两种画法混在一起。
+    const off = probePlanes([{ row: 5, col: 5, rot: 0 }], false)
+    assert.strictEqual(off.rec.grads.length, 0, '没传 planes 却画了龙骨')
+    const on = probePlanes([{ row: 5, col: 5, rot: 0 }], true)
+    assert.strictEqual(on.rec.grads.length, 1, '传了 planes 却没画龙骨')
+  })
+
+  /**
+   * 把一条 fill 路径还原成「每格一个矩形」。
+   *
+   * unionRectPath 的每格固定写 5 个点：moveTo(起点) + 4 个 arcTo 角点，
+   * 角点顺序固定为 TR / BR / BL / TL，所以
+   *   x0 = p[4].x、x1 = p[1].x、y0 = p[1].y、y1 = p[2].y
+   * 与「有没有圆角」无关 —— arcTo 在 r=0 时推的仍是角点本身。
+   */
+  function pathRects(path) {
+    const out = []
+    for (let i = 0; i + 4 < path.length; i += 5) {
+      const p = path.slice(i, i + 5)
+      out.push({ x0: p[4].x, x1: p[1].x, y0: p[1].y, y1: p[2].y })
+    }
+    return out
+  }
+
+  /**
+   * 两个矩形【朝外那一侧】的间距（负值 = 区间重叠）。
+   * 用来判「是不是四邻格」，不用来判断贴合 —— 因为朝外的一侧本来就要内缩。
+   */
+  function gap1d(a0, a1, b0, b1) {
+    if (a1 <= b0) return b0 - a1
+    if (b1 <= a0) return a0 - b1
+    return -Math.min(a1 - b0, b1 - a0)
+  }
+
+  /**
+   * 两个矩形是不是「贴着的相邻格」。是 → 返回接缝宽度（正=有缝，0=严丝合缝）。
+   *
+   * 判邻接**不能**比 x0/x1 是否相等：朝外的那条边会内缩 ins，两个相邻格
+   * 在另一条轴上的内缩可以不一样（一个在边上一个在中间）。所以判据是
+   * 「一条轴有缝（≤2.5px）、另一条轴大幅重叠」，那正是四邻关系。
+   */
+  function seamOf(a, b) {
+    const gx = gap1d(a.x0, a.x1, b.x0, b.x1)
+    const gy = gap1d(a.y0, a.y1, b.y0, b.y1)
+    if (gy <= 2.5 && gx < -1) return gy   // 上下相邻，接缝在 y 轴
+    if (gx <= 2.5 && gy < -1) return gx   // 左右相邻，接缝在 x 轴
+    return null
+  }
+
+  check('并集底色：10 格之间零缝隙（4 个朝向都验）', function () {
+    // 「一架飞机读成 10 块圆角卡片」的根因是底色层**逐格内缩**：
+    // 相邻两格各缩 ins，中间露出 2·ins 宽的暗底板。描边层一直只画并集轮廓，
+    // 所以这个断言必须盯住**填充路径的边**，而不是描边路径。
+    for (let rot = 0; rot < 4; rot++) {
+      const p = probePlanes([{ row: 5, col: 5, rot: rot }], true)
+      // 机体并集 = 9 格（机头除外），它后面紧跟的就是机头格的 fill
+      const bi = p.rec.paths.findIndex(function (a) { return a.length === 9 * 5 })
+      assert.ok(bi >= 0, 'rot' + rot + ' 没找到 9 格的机体并集路径')
+      const rects = pathRects(p.rec.paths[bi]).concat(pathRects(p.rec.paths[bi + 1]))
+      assert.strictEqual(rects.length, 10, 'rot' + rot + ' 底色格数不是 10（' + rects.length + '）')
+      let pairs = 0
+      for (let i = 0; i < rects.length; i++) {
+        for (let j = i + 1; j < rects.length; j++) {
+          const g = seamOf(rects[i], rects[j])
+          if (g === null) continue
+          pairs++
+          // 只禁「有缝」，不禁「少量重叠」：换色的那条边（机头/机身）必须重叠
+          // 0.6px，否则两次 fill 的抗锯齿各让 50%，合成后透出 25% 底板 = 一道暗细线。
+          assert.ok(g <= 1e-6,
+            'rot' + rot + ' 相邻两格之间留了 ' + g.toFixed(2) + 'px 的缝（底色逐格内缩）')
+        }
+      }
+      // 标准机 10 格的四邻接对恒为 9，与朝向无关；数量对不上说明邻接判定漏了某一向
+      assert.strictEqual(pairs, 9, 'rot' + rot + ' 邻接对数量 ' + pairs + '，应为 9')
+
+      // 机头与机身是**换色**边界：必须重叠，不能刚好贴合
+      const headRect = rects[9]
+      let headSeam = null
+      for (let i = 0; i < 9; i++) {
+        const g = seamOf(rects[i], headRect)
+        if (g !== null) headSeam = g
+      }
+      assert.ok(headSeam !== null && headSeam <= -0.5,
+        'rot' + rot + ' 机头与机身的换色边界没有重叠（' + headSeam + '），会透出一道暗细线')
+    }
+  })
+
+  /**
+   * 描边路径里有没有一段**恰好**从 (from, ay) 到 (to, ay) 的水平线。
+   *
+   * 必须比端点而不是比「有没有覆盖」：整张盘的格线也在同一个 y 上，
+   * 但它是 9 格长；飞机的轮廓边永远是**一格长**。用覆盖判定会把格线也算进来。
+   */
+  function hasSeg(pts, ay, from, to) {
+    for (let i = 0; i + 1 < pts.length; i += 2) {
+      const a = pts[i]
+      const b = pts[i + 1]
+      if (Math.abs(a.y - ay) > 0.05 || Math.abs(b.y - ay) > 0.05) continue
+      const lo = Math.min(a.x, b.x)
+      const hi = Math.max(a.x, b.x)
+      if (Math.abs(lo - from) < 0.05 && Math.abs(hi - to) < 0.05) return true
+    }
+    return false
+  }
+
+  check('机头↔机身是内部边：不描边、底角直角、两格重叠', function () {
+    // 三条都是硬要求，而且都能从路径数据直接读出来，不用靠看图：
+    //   ① 内部边不描：planeEdge 只描「邻居不在集合内」的边；
+    //   ② 底角直角：unionRectPath 的圆角只做在「两条相邻边都朝外」的角上；
+    //   ③ 两格重叠：换色的那条边外扩 FILL_OVERLAP，否则两次 fill 的抗锯齿各让 50%，
+    //      合成后透出 25% 底板 —— 那才是「机头读成一块贴上去的牌」的真正来源。
+    const C = C14
+    const p = probePlanes([{ row: 5, col: 5, rot: 0, p: 0 }], true)
+
+    const bi = p.rec.paths.findIndex(function (a) { return a.length === 9 * 5 })
+    assert.ok(bi >= 0, '没找到机体并集路径')
+    const head = p.rec.fills[bi + 1]
+    // arcTo 顺序固定 TR / BR / BL / TL
+    assert.strictEqual(head.radii.length, 4, '机头格角数不是 4')
+    assert.strictEqual(head.radii[1], 0, '机头右下角做了圆角（内部边那一侧不该有圆弧）')
+    assert.strictEqual(head.radii[2], 0, '机头左下角做了圆角（内部边那一侧不该有圆弧）')
+    assert.ok(head.radii[0] > 0 && head.radii[3] > 0, '机头外侧两角反而没圆角')
+
+    const yTop = BY + 4 * C      // 机头顶边：外侧边，必须描
+    const yJoint = BY + 5 * C    // 机头↔机身：内部边，不许描
+    const hx0 = BX + 4 * C
+    const hx1 = BX + 5 * C
+    const outline = p.rec.strokes.filter(function (s) { return hasSeg(s, yTop, hx0, hx1) })
+    assert.ok(outline.length >= 2, '没找到机头轮廓的两道描边（暗 + 亮），实际 ' + outline.length + ' 道')
+    outline.forEach(function (s, i) {
+      assert.ok(!hasSeg(s, yJoint, hx0, hx1),
+        '第 ' + (i + 1) + ' 道轮廓描边在机头↔机身的内部边上画了线')
+      // 同一道描边必须在机头**旁边**的机翼上沿有线，否则「没描内部边」可能只是整条轮廓丢了
+      assert.ok(hasSeg(s, yJoint, BX + 3 * C, BX + 4 * C),
+        '第 ' + (i + 1) + ' 道轮廓描边连机头左侧的机翼上沿都没画')
+    })
+  })
+
+
+  /** 相对亮度（WCAG） */
+  function lumOf(hex) {
+    const c = [1, 3, 5].map(function (i) {
+      const v = parseInt(hex.substr(i, 2), 16) / 255
+      return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+    })
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+  }
+  /** CIE L*（灰度阶梯用的就是它） */
+  function lstarOf(hex) {
+    const y = lumOf(hex)
+    return y > 0.008856 ? 116 * Math.pow(y, 1 / 3) - 16 : 903.3 * y
+  }
+
+  check('机身明度阶梯 ≥ 12；机头比机身亮但不得接近纯白', function () {
+    // 机身阶梯这个阈值不是装饰指标：它来自「灰度 + 红绿色盲 + 廉价 LCD 三者都还要能分开」。
+    // 上一轮实测 54.3 / 66.0 / 45.9，最小差 8.3 —— 规格写的 12 是四舍五入藏起来的 8.4。
+    // 处理方式是**让结果去够标准**，不是把标准降到 11。这条断言就是为了以后别再悄悄降。
+    const pal = theme.color.planePalette.slice(0, 3)
+    const L = pal.map(function (p) { return lstarOf(p.body) })
+    let min = Infinity
+    for (let i = 0; i < L.length; i++) {
+      for (let j = i + 1; j < L.length; j++) min = Math.min(min, Math.abs(L[i] - L[j]))
+    }
+    assert.ok(min >= 12,
+      '机身明度阶梯不足：' + L.map(function (v) { return v.toFixed(1) }).join(' / ') +
+      '，最小差 ' + min.toFixed(1) + ' < 12')
+    pal.forEach(function (p, i) {
+      const hb = lstarOf(p.head)
+      const bb = lstarOf(p.body)
+      // ① 机头 L* 必须落在「浅一档但不发白」的窗口里。
+      //    下界防「机头和机身一个色，朝向只剩龙骨」；上界防「近白牌」——
+      //    L* 87.9 的 #d6dde7 在 36px 上读成贴纸、11px 上读成空格，打回过一次。
+      //    窗口是 art 给的范围，不是我从结果反推的。
+      assert.ok(hb >= 68, '第 ' + (i + 1) + ' 架机头不够亮：L*=' + hb.toFixed(1) + ' < 68')
+      assert.ok(hb <= 74.5, '第 ' + (i + 1) + ' 架机头太接近纯白：L*=' + hb.toFixed(1) + ' > 74')
+      // ② 机头严格亮于机身：深色棋盘上这是「机头朝哪」的第二条通道（第一条是龙骨亮端）。
+      //    这条只保证方向，不保证「一眼看出是机头」—— 后者靠序号与龙骨，
+      //    所以 2 号机 Δ 只有 4.0 也算成立（报告里已写清这个代价）。
+      assert.ok(hb > bb,
+        '第 ' + (i + 1) + ' 架机头不比机身亮：head L*=' + hb.toFixed(1) + ' body=' + bb.toFixed(1))
+
+      // ③ 序号要压在机头上：近黑字对机头的对比度
+      const ink = (Math.max(lumOf(p.head), lumOf(theme.color.planeHeadInk)) + 0.05) /
+                  (Math.min(lumOf(p.head), lumOf(theme.color.planeHeadInk)) + 0.05)
+      assert.ok(ink >= 7, '第 ' + (i + 1) + ' 架机头上的序号对比度只有 ' + ink.toFixed(2) + '（< 7:1）')
+
+      // ④ 机身要能从底板上浮出来（非文字图形下限 3:1）
+      const cr = (Math.max(lumOf(p.body), lumOf(theme.color.boardBg)) + 0.05) /
+                 (Math.min(lumOf(p.body), lumOf(theme.color.boardBg)) + 0.05)
+      assert.ok(cr >= 2.995, '第 ' + (i + 1) + ' 架机身对底板对比度只有 ' + cr.toFixed(2))
+    })
+  })
+
+  check('11px 缩略盘：机头不画浅底盘，改用机身色 + 暗点', function () {
+    // 浅底盘是「机头在这」的强信号，但它有个尺寸下限：11px 的浅色方牌
+    // 既印不了字，又比机身亮一大截 —— 在缩略盘上会被读成「空格 / 被选中」。
+    // 闸门是 HEAD_PLATE_MIN_CELL（与 DETAIL_MIN_CELL 同值不同义，故意分开）。
+    const head = theme.color.planePalette[0].head
+    const same = function (a, b) { return String(a).toUpperCase() === String(b).toUpperCase() }
+
+    const big = probePlanes([{ row: 5, col: 5, rot: 0, p: 0 }], true, null, 40)
+    const small = probePlanes([{ row: 5, col: 5, rot: 0, p: 0 }], true, null, 11)
+    const smallOld = probePlanes([{ row: 5, col: 5, rot: 0, p: 0 }], false, null, 11)
+
+    assert.ok(big.rec.fills.some(function (f) { return same(f.style, head) }),
+      '40px 的精美化通道没有画机头底盘')
+    assert.ok(!small.rec.fills.some(function (f) { return same(f.style, head) }),
+      '11px 的精美化通道还在画机头底盘')
+    assert.ok(!smallOld.rec.rects.some(function (r) { return same(r.style, head) }),
+      '11px 的老画法还在画机头底盘')
+    // 底盘没了，机头只能靠中心暗点表达；11px 上全场只该有这一个圆
+    assert.strictEqual(small.rec.arcs, 1, '11px 上机头暗点数量 ' + small.rec.arcs + '（应为 1）')
+  })
+
+  check('机翼两端：5 格整宽、绕机头中线对称、不出自己占的格', function () {
+    // 这条回的是「翼尖越界」这个疑问。答案是**没有越界，而是两侧各内缩了同一个 ins**
+    // —— 逐格内缩是整套飞机底色的规矩（朝外的边内缩，朝内的边反而外扩 FILL_OVERLAP），
+    // 翼尖就是「朝外的边」里最外侧的那两条。
+    //
+    // 真要出错的样子是另外两种，所以断言卡的是这两条：
+    //   ① 左右不对称（一侧内缩、一侧外扩）→ 飞机看起来被推歪了一格；
+    //   ② 半翼展不是 2.5 格 → 翼展少了/多了一格，而翼展是「这是飞机」最直接的形状。
+    // 量的是**并集底色路径的实际坐标**（rec.paths[0] = drawPlane #3 的机体并集），
+    // 不是拿常量再算一遍 —— 那验的是常量表，不是画出来的东西。
+    const C = C14
+    const ins = Math.max(0.5, C * 0.03)
+    const halfSpan = 2.5 * C - ins
+    const bodyColor = theme.color.planePalette[0].body
+    for (let rot = 0; rot < 4; rot++) {
+      const p = probePlanes([{ row: 5, col: 5, rot: rot }], true)
+      // 按填色认路径，不按下标认：底板圆角矩形也是 fill，paths[0] 是它
+      // （第一版就这么踩空了，量出来的「半翼展」是底板的一半宽）。
+      let idx = -1
+      for (let i = 0; i < p.rec.fills.length; i++) {
+        if (String(p.rec.fills[i].style).toUpperCase() === bodyColor.toUpperCase()) { idx = i; break }
+      }
+      assert.ok(idx >= 0, 'rot' + rot + ' 没找到机体底色的填充路径')
+      const body = p.rec.paths[idx]
+      let x0 = Infinity
+      let x1 = -Infinity
+      let y0 = Infinity
+      let y1 = -Infinity
+      body.forEach(function (q) {
+        if (q.x < x0) x0 = q.x
+        if (q.x > x1) x1 = q.x
+        if (q.y < y0) y0 = q.y
+        if (q.y > y1) y1 = q.y
+      })
+      const hc = headCenterOf(p.planes[0])
+      // 翼展轴随朝向变：机头朝上/下时翼横跨，朝左/右时翼纵跨
+      const dLo = rot % 2 === 0 ? hc.x - x0 : hc.y - y0
+      const dHi = rot % 2 === 0 ? x1 - hc.x : y1 - hc.y
+      assert.ok(Math.abs(dLo - halfSpan) < 0.01,
+        'rot' + rot + ' 半翼展偏了：近端 ' + dLo.toFixed(2) + '，应为 ' + halfSpan.toFixed(2))
+      assert.ok(Math.abs(dHi - halfSpan) < 0.01,
+        'rot' + rot + ' 半翼展偏了：远端 ' + dHi.toFixed(2) + '，应为 ' + halfSpan.toFixed(2))
+      assert.ok(Math.abs(dLo - dHi) < 0.01,
+        'rot' + rot + ' 翼两端不对称：' + dLo.toFixed(2) + ' vs ' + dHi.toFixed(2))
+    }
+  })
+
+
+  /* ================= [15] 雷达扫掠：几何、成本、相位 ================= */
+  section('[15] 雷达扫掠：几何、成本、相位')
+
+  /** 扫掠在 t 毫秒时的前沿角（度）。公式必须和 board.js 里那条一致。 */
+  function sweepDeg(t) {
+    return ((t / 1000) * theme.sweep.speed) % 360
+  }
+
+  /**
+   * 取「多出来的那一段」记录点。
+   *
+   * 扫掠是**插在中间**画的（底板之后、格线之前），所以不能用 `slice(base.length)`
+   * —— 那拿到的是棋盘末尾的刻度点，断言会「通过」，但验的是错的东西。
+   * 前缀一定完全相同，找到第一个不同的下标，后面连续 n 个就是扫掠自己的顶点。
+   */
+  function addedPoints(base, withExtra) {
+    const a = base.rec.pts
+    const b = withExtra.rec.pts
+    const n = b.length - a.length
+    if (n <= 0) return []
+    let i = 0
+    while (i < a.length && a[i].x === b[i].x && a[i].y === b[i].y) i++
+    return b.slice(i, i + n)
+  }
+
+  check('边界点：整圈 360 个角度都不出格区，轴向顶到 half、大角顶到 half·√2', function () {
+    // 通过真实渲染间接验。这一条同时否掉了「用圆当外沿」——
+    // 圆的话角上只有 half，会在盘面上描出一条内切圆，暗示「角落扫不到」（假信息）。
+    //
+    // **逐度走满一圈**，不是挑几个「有代表性」的角：扫掠是连续转的，
+    // 出格只可能发生在射线顶到边的那些瞬间，而它们不落在整数角度上 ——
+    // 抽样验的是「我挑的那几个角没事」，逐度验的才是「任何时刻都没事」。
+    const half = 9 * C14 / 2
+    const cx = BX + half
+    const cy = BY + half
+    const base = probePlanes([], false)
+    for (let deg = 0; deg < 360; deg++) {
+      const t = deg * 1000 / theme.sweep.speed
+      const p = probePlanes([], false, { sweep: { t: t, alpha: 1 } })
+      const added = addedPoints(base, p)
+      assert.ok(added.length > 0, deg + '° 没有画出任何顶点')
+      added.forEach(function (q) {
+        const d = Math.hypot(q.x - cx, q.y - cy)
+        assert.ok(d <= half * Math.SQRT2 + 0.01,
+          deg + '° 有顶点跑出棋盘正方形：d=' + d.toFixed(2) + ' > ' + (half * Math.SQRT2).toFixed(2))
+        // 两条轴分开再卡一遍：d 只说明「在以盘心为圆心的外接圆里」，
+        // 而真正的边界是正方形 —— 圆内接于正方形，所以 d 过关不蕴含 x/y 过关。
+        assert.ok(q.x >= cx - half - 0.01 && q.x <= cx + half + 0.01,
+          deg + '° 有顶点横向出格区：x=' + q.x.toFixed(2))
+        assert.ok(q.y >= cy - half - 0.01 && q.y <= cy + half + 0.01,
+          deg + '° 有顶点纵向出格区：y=' + q.y.toFixed(2))
+      })
+      const nearAxis = (deg % 90 === 0)
+      if (nearAxis) {
+        let hit = false
+        added.forEach(function (q) {
+          if (Math.abs(Math.hypot(q.x - cx, q.y - cy) - half) < 0.01) hit = true
+        })
+        assert.ok(hit, deg + '° 是轴向却没顶到 half —— 外沿被当成了圆')
+      }
+    }
+    // 45°/s → 2.0s 正好 90°，8.0s 一圈（art §4.3）
+    assert.ok(Math.abs(sweepDeg(2000) - 90) < 1e-9, 't=2000ms 不是 90°：' + sweepDeg(2000))
+    assert.ok(Math.abs(sweepDeg(8000) % 360) < 1e-9, '8s 不是一整圈：' + sweepDeg(8000))
+  })
+
+  check('跨角时角点被插入路径（含负角度，附 B 的字面写法会漏）', function () {
+    const half = 9 * C14 / 2
+    const cx = BX + half
+    const cy = BY + half
+    const base = probePlanes([], false)
+    // a=60° → 核心 [20°,60°] 跨 45° 角；a=-30° → 核心 [-70°,-30°] 跨 -45° 角
+    ;[60, -30].forEach(function (deg) {
+      const t = ((deg + 360) % 360) * 1000 / theme.sweep.speed
+      const p = probePlanes([], false, { sweep: { t: t, alpha: 1 } })
+      const sg = Math.sin(deg * Math.PI / 180) > 0 ? 1 : -1
+      // 该角点：右下角（60° 时）或右上角（-30° 时）
+      const ex = cx + half
+      const ey = cy + sg * half
+      const ok = addedPoints(base, p).some(function (q) {
+        return Math.abs(q.x - ex) < 1e-6 && Math.abs(q.y - ey) < 1e-6
+      })
+      assert.ok(ok, deg + '° 的核心扇段没有插入角点 (' + ex + ',' + ey + ') —— 会被一条弦切掉一块')
+    })
+  })
+
+  check('扫掠 10 次绘制；alpha=0 或 cell<22 时一次都不画', function () {
+    const t = 1234
+    const off = probePlanes([], false).rec.batches
+    const on = probePlanes([], false, { sweep: { t: t, alpha: 1 } }).rec.batches
+    assert.strictEqual(on - off, 10, '扫掠不是 10 次（核心 1 + 拖尾 7 + 前沿线 1 + 束头 1）：' + (on - off))
+
+    const zero = probePlanes([], false, { sweep: { t: t, alpha: 0 } }).rec.batches
+    assert.strictEqual(zero, off, 'alpha=0 还在画（§4.7 要求整层跳过，0 次调用）')
+
+    // 缩略盘：格子 11px，扫掠必须关掉
+    const rec = recorder()
+    const cells = []
+    for (let r = 0; r < 9; r++) { const row = []; for (let c = 0; c < 9; c++) row.push(''); cells.push(row) }
+    Board.render(rec.ctx, { x: 0, y: 0, size: 9 * 11, cells: cells, sweep: { t: t, alpha: 1 } },
+      function (v) { return v })
+    const rec2 = recorder()
+    Board.render(rec2.ctx, { x: 0, y: 0, size: 9 * 11, cells: cells }, function (v) { return v })
+    assert.strictEqual(rec.batches, rec2.batches, '11px 缩略盘上还在扫')
+  })
+
+  check('扫掠全部落在格区之内（永远洗不到双轴刻度）', function () {
+    const size = 9 * C14
+    const base = probePlanes([], false)
+    const p = probePlanes([], false, { sweep: { t: 777, alpha: 1 } })
+    const added = addedPoints(base, p)
+    assert.ok(added.length > 0, '没画出顶点')
+    added.forEach(function (q) {
+      assert.ok(q.x >= BX - 0.01 && q.x <= BX + size + 0.01, '横向出格区：x=' + q.x.toFixed(2))
+      assert.ok(q.y >= BY - 0.01 && q.y <= BY + size + 0.01, '纵向出格区：y=' + q.y.toFixed(2))
+    })
+  })
+
+  check('相位永不复位：状态切换、finished 都挡不住时钟', function () {
+    const b = app.get('battle')
+    const back = { myTurn: b.myTurn, finished: b.finished, lastBattle: b.lastBattle }
+    b.battleClock = 0
+    b.sweepAlpha = 0
+    b.finished = false
+    b.myTurn = false
+    b.lastBattle = { turnDeadline: Date.now() + 20000 }
+
+    // 240ms 淡入：16ms/帧 → 15 帧正好到 1
+    for (let i = 0; i < 15; i++) b.update(16)
+    assert.ok(Math.abs(b.sweepAlpha - 1) < 1e-9, '240ms 后主透明度不是 1：' + b.sweepAlpha)
+    assert.ok(Math.abs(b.battleClock - 240) < 1e-9, '时钟没跟着走：' + b.battleClock)
+
+    // 轮到我方 → 淡出，但时钟继续走
+    b.myTurn = true
+    for (let i = 0; i < 15; i++) b.update(16)
+    assert.ok(b.sweepAlpha === 0, '我方回合没淡出：' + b.sweepAlpha)
+    assert.ok(Math.abs(b.battleClock - 480) < 1e-9, '我方回合时时钟停了：' + b.battleClock)
+
+    // 结束态：update 会提前 return，但时钟仍必须推进（否则每局都「重新开机」）
+    b.finished = true
+    b.update(16)
+    assert.ok(Math.abs(b.battleClock - 496) < 1e-9, 'finished 之后时钟停了：' + b.battleClock)
+
+    // 只有放大的那块盘拿得到扫掠参数
+    b.sweepAlpha = 0.5
+    assert.strictEqual(b.sweepFor(false), null, '缩略盘也拿到了扫掠参数')
+    assert.ok(b.sweepFor(true), '放大的盘没拿到扫掠参数')
+
+    b.myTurn = back.myTurn
+    b.finished = back.finished
+    b.lastBattle = back.lastBattle
+  })
+
+  check('焦点盘跟着回合走：等待态放大我方，轮到我放大敌方（不是反的）', function () {
+    // 这条回的是「焦点盘是不是反了」。
+    //
+    // 规则只有一行：`focus = finished ? focus : (myTurn ? 'foe' : 'mine')`。
+    // 为什么这么定：轮到我时要做的事是**逐格排查敌方盘、点目标、按发射**，
+    // 那块盘必须放大并且落在拇指区；等待时没事可干，看的是「我被打成什么样」，
+    // 于是放大的是我方盘。所以两块盘的**上下位置固定**（我方永远在上），
+    // 只有尺寸互换 —— 这才是对的，不是「放大盘永远在下」。
+    //
+    // 走真实的 applyBattle，不手改 focus：手改验的是「设完之后画得对」，
+    // 而这里要验的是「服务端说轮到谁，界面会不会自己切过去」。
+    const b = app.get('battle')
+    const keys = ['focus', 'myTurn', 'finished', 'lastBattle', 'mine', 'incoming',
+      'statusText', 'myShots', 'foeShots', 'myDestroyed', 'foeDestroyed', 'foePlaneCount',
+      'myStreak', 'stepSeconds', 'wasTurn', 'wasFinished', 'emoteBarOpen', 'selected']
+    const back = { focus: b.focus }
+    keys.forEach(function (k) { back[k] = b[k] })
+    const foeId = String(b.myOpenid || 'me') + '_foe'
+    const view = function (turn) {
+      return {
+        finished: false, turn: turn, marks: {}, incoming: {}, stats: {},
+        streak: {}, counts: {}, stepSeconds: b.stepSeconds
+      }
+    }
+
+    // 基线摆到「我方放大」，确保下面第一次 applyBattle 一定触发重排
+    b.focus = 'mine'
+    b.applyBattle(view(b.myOpenid))
+    assert.strictEqual(b.focus, 'foe', '轮到我了，焦点却没切到敌方海域')
+    assert.ok(b.geo.foeBoard.size > b.geo.mineBoard.size + 0.5,
+      '轮到我时放大的不是敌方盘：我方 ' + b.geo.mineBoard.size.toFixed(1) +
+      ' / 敌方 ' + b.geo.foeBoard.size.toFixed(1))
+    assert.ok(b.geo.mineBlock.top < b.geo.foeBlock.top, '我方盘必须在上面（位置不随焦点变）')
+
+    b.applyBattle(view(foeId))
+    assert.strictEqual(b.focus, 'mine', '等待对方行动，焦点却没切回我方海域')
+    assert.ok(b.geo.mineBoard.size > b.geo.foeBoard.size + 0.5,
+      '等待态放大的不是我方盘：我方 ' + b.geo.mineBoard.size.toFixed(1) +
+      ' / 敌方 ' + b.geo.foeBoard.size.toFixed(1))
+    assert.ok(b.geo.mineBlock.top < b.geo.foeBlock.top, '我方盘必须在上面（位置不随焦点变）')
+
+    // 同时只扫一块：放大那块拿得到扫掠参数，缩小那块必须拿不到
+    b.sweepAlpha = 1
+    assert.ok(b.sweepFor(b.focus === 'mine'), '等待态放大的那块盘没拿到扫掠参数')
+    assert.strictEqual(b.sweepFor(b.focus !== 'mine'), null, '缩小的那块盘也拿到了扫掠参数')
+
+    keys.forEach(function (k) { b[k] = back[k] })
+    b.focus = back.focus
+    b.sweepAlpha = 0
+    b.layout()
+  })
+
   /* ---------- 收尾 ---------- */
   app.stop()
   offline._reset()

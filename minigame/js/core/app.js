@@ -7,6 +7,7 @@
 //   app.toast / busy ≈ wx.showToast / showLoading
 const { createLayout } = require('./layout')
 const { hitZone } = require('./geom')
+const { createFx } = require('./fx')
 const draw = require('./draw')
 const theme = require('./theme')
 
@@ -32,6 +33,9 @@ function createApp(opts) {
     layout: layout,
     ctx: ctx,
     canvas: canvas,
+
+    /** 动效时钟：全仓唯一的动效时间源（见 core/fx.js 开头的说明） */
+    fx: createFx(),
 
     /** 设计稿单位 → px 的快捷方式 */
     u: function (v) { return layout.u(v) },
@@ -150,13 +154,32 @@ function createApp(opts) {
       this._running = true
       const self = this
       let last = Date.now()
+
       const tick = function () {
         if (!self._running) return
-        const now = Date.now()
-        const dt = Math.min(64, now - last)
-        last = now
-        self.frame(dt, now)
-        self._rafId = raf(tick)
+        try {
+          const now = Date.now()
+          const raw = now - last
+          // 下钳 0：系统时间被往回调时 raw 是负数，不钳的话动效会倒着走。
+          // 上钳 64：切后台/断点调试回来时不要让 dt 一次推进好几秒。
+          const dt = Math.min(64, Math.max(0, raw))
+          last = now
+
+          self.fx.step(dt)
+          self.update(dt)
+          self.paint(now)
+        } catch (e) {
+          // 一帧画错可以难看，永久黑屏不行。
+          // 注意：这里吞掉异常，但 renderOnce() 故意不包 try/catch ——
+          // 测试仍然能通过它拿到真实的抛错。
+          if (typeof console !== 'undefined' && console.error) {
+            console.error('[zfj] frame error', e && e.stack ? e.stack : e)
+          }
+        } finally {
+          // 无论这一帧有没有抛，都必须重新排下一帧。
+          // 原来 frame() 抛异常 → 递归没走到 → rAF 永不再排 → 整屏永久卡死。
+          if (self._running) self._rafId = raf(tick)
+        }
       }
       this._rafId = raf(tick)
     },
@@ -166,17 +189,41 @@ function createApp(opts) {
       if (this._rafId != null) { caf(this._rafId); this._rafId = null }
     },
 
-    frame: function (dt, now) {
+    /**
+     * 逻辑帧：**每个 rAF 都跑**，不允许跳。
+     *
+     * 场景的计时、轮询、倒计时全靠 dt 喂（battle.update 里那个 250ms 累加器）。
+     * 一旦把逻辑频率和绘制频率绑在一起，将来想在 update 里做更细的事就得再拆一次。
+     */
+    update: function (dt) {
       const scene = this.scene
       if (!scene) return
       if (scene.update) scene.update(dt)
+    },
+
+    /** 绘制帧：将来低端机降级时可以每 2 帧才画一次，逻辑照跑 */
+    paint: function (now) {
+      const scene = this.scene
+      if (!scene) return
       draw.background(this.ctx, layout)
       if (scene.render) scene.render(this.ctx)
       this.drawOverlays(now)
     },
 
-    /** 渲染一次（测试用，不启动循环） */
-    renderOnce: function () {
+    /** 逻辑 + 绘制一次（兼容旧调用方与 renderOnce） */
+    frame: function (dt, now) {
+      this.update(dt)
+      this.paint(now)
+    },
+
+    /**
+     * 渲染一次（测试与出图用，不启动循环）
+     * @param {number} [fxMs] 把动效时钟钉在这个毫秒值上；不给则沿用当前累积值
+     */
+    renderOnce: function (fxMs) {
+      if (fxMs != null) this.fx.freeze(fxMs)
+      // now 仍然用 Date.now()：toast / feedback 的过期判定不能被冻结，
+      // 否则预览图里会永远挂着一个提示。
       this.frame(16, Date.now())
     },
 

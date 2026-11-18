@@ -457,10 +457,37 @@ class Deploy extends Scene {
       y: g.board.y,
       size: g.board.size,
       cells: this.cells(),
+      planes: this.boardPlanes(),
       marks: this.marks(),
       dim: this.dimMap(),
       selectable: !this.waiting && !this.readying
     }
+  }
+
+  /**
+   * 精美化通道的入参（art §5.10）
+   *
+   * 只有「整架都在盘内、且没被拿在手上」的飞机进来，其余退回逐格老画法：
+   *   ① **拿在手上的那架**不进来 —— 它已经不在棋盘的 cells 里了，
+   *      再按整架画一次屏幕上会同时出现两份（本体 + 落点框）。
+   *   ② **出界的**不进来 —— 装饰带的方向和位置是按「整架都在盘内」推导的，
+   *      有格子在盘外时会画到棋盘外面去（糊到倒计时、状态条上）。
+   *      出界是错误态、本来就整架半透明，老画法足够表达。
+   * 一条代码路径两种渲染，新路径坏掉时老路径还在。
+   */
+  boardPlanes() {
+    const out = []
+    const a = this.audit()
+    const dragIdx = this.drag ? this.drag.idx : -1
+    this.placed.forEach(function (p, i) {
+      if (i === dragIdx || !isOut(p)) return
+      for (let k = 0; k < p.cells.length; k++) {
+        if (outsideCell(p.cells[k])) return
+      }
+      // 整齐在盘内、但压到别的飞机 → 仍然整架半透明（和逐格老画法一致）
+      out.push({ p: p.slot, rotation: p.rotation, cells: p.cells, bad: !!a.overlap[i] })
+    })
+    return out
   }
 
   cells() {

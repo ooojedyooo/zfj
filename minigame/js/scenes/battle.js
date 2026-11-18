@@ -57,6 +57,12 @@ class Battle extends Scene {
     this.watcher = null
     this.emoteTimer = null
     this._lastTap = null    // 上一次点中的格 {row, col, at}，用于识别双击发射
+
+    // 雷达扫掠：时钟**不在这里初始化清零**（只在构造时置 0）——
+    // 「永不复位」包括跨局：玩家看到的是「这台雷达一直在转，只是刚才没显示」，
+    // 而不是「每局它都重新开机」。主透明度同理，交给 update 里的 240ms 过渡收敛。
+    this.battleClock = 0
+    this.sweepAlpha = 0
   }
 
   /* ---------------- 生命周期 ---------------- */
@@ -103,6 +109,17 @@ class Battle extends Scene {
   }
 
   update(dt) {
+    // 雷达时钟与淡入淡出必须**在下面那个提前 return 之前**推进。
+    //
+    // 时钟永不复位是 art §4.3 的硬要求：一局里「对方回合」要反复进出十几次
+    // （每回合切一次），每次从 t=0 起算 = 雷达每 20 秒从 12 点重新开机，
+    // 比相位跳变更刺眼。要是让它跟着下面的 `finished / 没有 deadline` 一起被卡住，
+    // 相位就会在每次状态切换时倒退 —— 等于偷偷把「不复位」破坏掉了。
+    // 用 dt 累加而不是 Date.now() 还多一个必要副作用：切后台回来 dt 不会跳过几秒。
+    const d = Math.max(0, Number(dt) || 0)
+    this.battleClock += d
+    this.stepSweepAlpha(d)
+
     if (this.finished || !this.lastBattle || !this.lastBattle.turnDeadline) return
     this.tickAcc += dt
     if (this.tickAcc < 250) return
@@ -111,6 +128,49 @@ class Battle extends Scene {
     const left = Math.max(0, Math.ceil((this.lastBattle.turnDeadline - Date.now()) / 1000))
     if (left !== this.turnSeconds) this.turnSeconds = left
     if (left <= 0) this.requestTick()
+  }
+
+  /**
+   * 扫掠该不该出现（art §4.7）
+   *
+   * 全游戏只有「对方回合 / 等待回应」这 20 秒是玩家没事干的时候：
+   * 静止的盘 = 玩家怀疑卡死，扫掠 = 「系统在跑、我们在听」。
+   * 轮到我方出手就关 —— 那要逐格排查、核对「横3竖4」、点选目标，**读数优先于氛围**。
+   */
+  sweepWanted() {
+    return !this.finished && !this.myTurn && !!this.lastBattle
+  }
+
+  /** 主透明度按 240ms 线性趋近 0 或 1。硬开关会让「轮到你了」那一瞬像掉帧。 */
+  stepSweepAlpha(dt) {
+    const target = this.sweepWanted() ? 1 : 0
+    if (this.sweepAlpha === target) return
+    const step = dt / theme.sweep.fadeMs
+    let v = this.sweepAlpha < target
+      ? Math.min(target, this.sweepAlpha + step)
+      : Math.max(target, this.sweepAlpha - step)
+    // 浮点累加不会精确落到 0（1 − 15×(16/240) 会剩 8e-17），而这个 0 是**功能性的**：
+    // 只有真正等于 0，board.js 才会整层跳过（0 次绘制调用）。差一位就等于
+    // 每帧白画 10 次「看不见的扫掠」。所以到目标附近直接吸附。
+    if (Math.abs(v - target) < 1e-6) v = target
+    this.sweepAlpha = v
+  }
+
+  /**
+   * 把扫掠参数发给「当前放大的那块盘」
+   *
+   * 同一时刻最多 1 个扫掠实例：两块盘同时扫，视线会被两个不同相位的运动撕开
+   * （最难受的一种视觉噪声）。
+   *
+   * ⚠ 与任务书的一处出入，已报 team-lead：任务书写「只扫放大的那块**敌方海域**」，
+   * 但等待态下放大的其实是**我方海域** —— applyBattle 里 `myTurn ? 'foe' : 'mine'`，
+   * 不是我的回合就放大自己的盘。按字面实现的话，那时敌方盘是 11px 缩略盘，
+   * SWEEP_MIN_CELL=22 会直接把它关掉，扫掠永远不会出现。
+   * 所以这里按 art §4.7「挂在当前放大的那块盘上」实现。
+   */
+  sweepFor(focused) {
+    if (!focused || this.sweepAlpha <= 0) return null
+    return { t: this.battleClock, alpha: this.sweepAlpha }
   }
 
   /* ---------------- 数据同步 ---------------- */
@@ -384,6 +444,7 @@ class Battle extends Scene {
     this.drawArea(ctx, u, {
       block: g.mineBlock, board: g.mineBoard, title: '我方海域 · 受损情况',
       focus: this.focus === 'mine', cells: this.myCells(), selectable: false,
+      planes: this.myPlanes(),
       disabled: {}, tag: this.myDestroyed + '/' + (this.planeCount || 1) + ' 架被毁'
     })
 
@@ -479,8 +540,32 @@ class Battle extends Scene {
     Board.render(ctx, {
       x: board.x, y: board.y, size: board.size,
       cells: o.cells, selectable: o.selectable,
+      planes: o.planes,
+      sweep: this.sweepFor(o.focus),
       disabledMap: o.disabled, selected: o.selectable ? this.selected : null
     }, u)
+  }
+
+  /**
+   * 我方海域的飞机，走精美化通道（art §5.10）
+   *
+   * 敌方海域**永远不传** —— 敌盘上不出现飞机的任何形状、剪影、虚影（§5.7）。
+   * 飞机是隐藏信息，任何轮廓暗示都在泄漏「这一带可能有飞机」，
+   * 而机头位置决定整架生死：泄漏一格 = 泄漏一条命。
+   *
+   * 出界的不进来（理论上布阵阶段已挡掉，这里只是兜底）：装饰带按「整架在盘内」推导。
+   */
+  myPlanes() {
+    const out = []
+    ;(this.myDeploy || []).forEach(function (p, i) {
+      const abs = getAbsoluteCells(p.planeId, p.anchorRow, p.anchorCol, p.rotation)
+      for (let k = 0; k < abs.length; k++) {
+        const c = abs[k]
+        if (c.row < 1 || c.row > BOARD_SIZE || c.col < 1 || c.col > BOARD_SIZE) return
+      }
+      out.push({ p: i, rotation: p.rotation, cells: abs })
+    })
+    return out
   }
 
   /* ---------------- 棋盘状态 ---------------- */

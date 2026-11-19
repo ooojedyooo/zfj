@@ -43,6 +43,14 @@ if (!playerId) {
   try { wx.setStorageSync('zfj_player_id', playerId) } catch (e) { /* ignore */ }
 }
 
+/* ---------------- 皮肤（纯本地，启动读一次） ---------------- */
+// 只在这里读一次存储和调一次 applySkin。进场景不再读：切换时统一走 skin.setSkinId
+// + applySkin + 立即重绘，避免不同场景各自读存储、在切换那一帧抖出半屏旧色。
+const skin = require('./js/core/skin')
+const theme = require('./js/core/theme')
+const skinId = skin.getSkinId()
+theme.applySkin(skinId)
+
 /* ---------------- 应用与场景 ---------------- */
 const app = createApp({
   canvas: canvas,
@@ -62,6 +70,7 @@ const app = createApp({
 
 app.globalData.playerId = playerId
 app.globalData.cloudReady = cloudReady
+app.globalData.skinId = skinId
 
 /* ---------------- 触摸 ---------------- */
 function pointOf(e, useChanged) {

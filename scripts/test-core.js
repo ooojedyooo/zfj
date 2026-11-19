@@ -241,8 +241,18 @@ function runAiOn(planes) {
   return g.finished ? g.foeShots : null
 }
 
+// 这 30 张盘曾经用全局 Math.random 生成，于是同一份代码有约 1/12 的概率红在
+// 「满血 AI 比沙包少三成炮」这一条上 —— 抖的是「这一次抽到了哪些盘」，
+// 不是 AI 参数有没有生效。固定种子，让这条测的是参数本身。
+const _random = Math.random
+let _boardSeed = 20261113
+Math.random = function () {
+  _boardSeed = (_boardSeed * 1664525 + 1013904223) >>> 0
+  return _boardSeed / 4294967296
+}
 const boards = []
 for (let i = 0; i < 30; i++) boards.push(randomDeploy(1, 'standard', BOARD_SIZE))
+Math.random = _random
 function avgOn(list) {
   let t = 0
   let n = 0

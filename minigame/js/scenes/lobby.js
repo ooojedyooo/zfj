@@ -12,6 +12,7 @@
 //   所以「想打几架」必须在匹配之前就问清楚 —— 否则匹配进去才发现是三架局。
 const Scene = require('./base')
 const theme = require('../core/theme')
+const skin = require('../core/skin')
 const draw = require('../core/draw')
 const Button = require('../widgets/button')
 const planeIcon = require('../widgets/plane-icon')
@@ -143,6 +144,13 @@ class Lobby extends Scene {
     g.titleY = L.safeTop + gap(140) + extraTop * 0.5
     g.subY = g.titleY + gap(58)
 
+    // 皮肤入口贴副标题右端，不占新的一行 —— 大厅在 320×568 上已经没有余量。
+    // 名字必须显示出来：一个无标签的色块只能说明「这里能点」，说不出「现在是哪套」。
+    const skinW = u(196)
+    const skinH = u(84)   // 320 屏上约 36px：比正文行高，手指点得到
+    g.skinBtn = { x: L.W - x - skinW, y: g.subY - skinH / 2, w: skinW, h: skinH }
+    this.zone(g.skinBtn.x, g.skinBtn.y, skinW, skinH, this.onSkin.bind(this))
+
     let y = g.subY + gIntro + extraTop * 0.5
 
     if (!api.isCloud) {
@@ -240,6 +248,16 @@ class Lobby extends Scene {
     // 标题下方一道短装饰线：纯文字标题在深底上容易「飘」，压一条线把视觉重心钉住
     draw.fillRect(ctx, g.x, g.subY + u(30), u(88), u(4), c.primary, u(2))
 
+    // 当前皮肤名常驻可见；点一下在下一套之间切换（白名单由 core/skin.js 管）
+    const sb = g.skinBtn
+    const srad = u(theme.radius.pill)
+    draw.fillRect(ctx, sb.x, sb.y, sb.w, sb.h, c.panel, srad)
+    draw.strokeRect(ctx, sb.x, sb.y, sb.w, sb.h, c.borderHi, srad, 1)
+    draw.text(ctx, skin.skinName(this.app.globalData.skinId), sb.x + sb.w / 2,
+      sb.y + sb.h / 2, {
+        size: u(theme.size.tiny), color: c.textMuted, align: 'center'
+      })
+
     if (g.tipY != null) {
       // 右侧显示当前强度等级：不用点进去也知道现在对面有多难
       ui.modeTip(ctx, L, g.x, g.tipY, g.w, '离线试玩 · 对手是本地 AI', {
@@ -318,6 +336,28 @@ class Lobby extends Scene {
     if (!api.isCloud) {
       draw.text(ctx, '玩家标识 ' + this.app.globalData.playerId, L.W / 2, g.footY, {
         size: u(theme.size.tiny), color: c.textMuted, align: 'center'
+      })
+    }
+  }
+
+  /**
+   * 换肤：先把主题改掉、再改 storage、最后同一帧内重排 + 重绘。
+   * 顺序很重要 —— 先写 storage 再改主题的话，中间那一帧会用旧色画新名字；
+   * 而分两帧重绘会出现「半屏旧色」。这里全部同步做完，不存在中间态。
+   */
+  onSkin() {
+    const cur = this.app.globalData.skinId || skin.DEFAULT
+    const i = skin.ALLOWED.indexOf(cur)
+    const next = skin.ALLOWED[(i + 1) % skin.ALLOWED.length]
+    const applied = theme.applySkin(next)
+    const saved = skin.setSkinId(applied)
+    this.app.globalData.skinId = applied
+    this.layout()
+    this.app.renderOnce()
+    if (!saved) {
+      dialog.alert({
+        title: '提示',
+        content: '当前环境无法保存皮肤设置，本次切换只在当前页面生效'
       })
     }
   }

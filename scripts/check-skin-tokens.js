@@ -127,6 +127,7 @@ function commentHexes(src) {
 /* 规格里的 token 名 → theme.js 里的键名
  * （§9.1 名字对照：v1 是代码里还在用的名字，v2 是契约里的名字） */
 const CODE_KEY = {
+  bgGrid: 'grid',       // 页面雷达网格（别和 board 的 grid 混：那个是 gridLine）
   plate: 'boardBg',
   frame: 'boardFrame',
   grid: 'gridLine',
@@ -469,6 +470,33 @@ if (tokens.length < 20) {
   }
 }
 
+/* 两块已落地皮肤各自的 hex token 都要逐名逐值对上。
+ *
+ * 为什么只比到 SKINS[皮肤] 这一层、又只比 hex：theme.color 是合并后的当前视图，
+ * 皮肤块里少一个键未必看得出来；而 SKINS 块里的 rgba（plateShadow / sheen / …）
+ * 目前代码没有同名键，是既有的已知盲区（脚本开头已打印 rgba 盲区数量），
+ * 不能在这里突然把它变成硬失败 —— 那是拿旧账当新错。
+ * palette 是对象数组，逐对比较在断言二/三里做，那里比这里严（计数检查抓不到配对漂移）。
+ */
+;[['abyss', theme.skins && theme.skins.abyss], ['dusk', theme.skins && theme.skins.dusk]]
+  .forEach(function (pair) {
+    const skinObj = pair[1]
+    if (!skinObj) {
+      fail('一·反向', 'theme.skins.' + pair[0] + ' 不存在 —— 断言三也过不了')
+      return
+    }
+    const t = contractTokens(pair[0] === 'abyss' ? contAbyss : contDusk)
+    const bad = []
+    t.forEach(function (x) {
+      const key = CODE_KEY[x.name] || x.name
+      const got = skinObj[key]
+      if (typeof got !== 'string') bad.push(x.name + '→' + key + '：皮肤块里没有这个键')
+      else if (got.toUpperCase() !== x.hex) bad.push(x.name + '→' + key + '：期望 ' + x.hex + '，实际 ' + got.toUpperCase())
+    })
+    if (bad.length) bad.forEach(function (b) { fail('一·反向', pair[0] + '：' + b) })
+    else ok('SKINS.' + pair[0] + ' ' + t.length + ' 个 hex token 逐名字逐值对上')
+  })
+
 /* STATE / SWEEP / PLANE_ART 三块：值不是 hex，用能认 rgba / 数字 / 数组的解析器。
  * 这三块以前整块漏在检查之外 —— 「漏掉」在检查里等于「验过了」。 */
 reportBlock('STATE', compareBlock(contState, theme.color, 'color', null))
@@ -556,15 +584,36 @@ if (codePairs.length !== 3) {
   }
 }
 
-/* ================== 5. 断言三：未落地的皮肤不许提前混进来 ================== */
+/* ================== 5. 断言三：dusk 已落地且对齐；mono 仍未落地 ================== */
 
-console.log('\n断言三 · dusk / mono 的 token 不得出现在代码里（本期只有 abyss 落地）')
+console.log('\n断言三 · dusk 必须逐名逐值落地；mono 独有色值仍 0 命中')
 
-const foreign = new Set()
-;[SET.dusk, SET.mono].forEach(function (s) {
-  s.forEach(function (h) {
-    if (!SET.abyss.has(h) && !SET.sem.has(h)) foreign.add(h)
+if (!theme.skins || !theme.skins.dusk) {
+  fail('三', 'theme.skins.dusk 不存在 —— dusk 没有落地')
+} else {
+  const duskPairs = theme.skins.dusk.planePalette.map(function (p) {
+    return [String(p.body).toUpperCase(), String(p.head).toUpperCase()]
   })
+  const want = pairsSec.slice(3, 6)
+  const bad = []
+  for (let i = 0; i < 3; i++) {
+    if (!want[i] || duskPairs[i][0] !== want[i][0] || duskPairs[i][1] !== want[i][1]) {
+      bad.push('第 ' + (i + 1) + ' 架：期望 ' + (want[i] ? want[i].join(' / ') : '规格缺行') +
+        '，实际 ' + duskPairs[i].join(' / '))
+    }
+  }
+  if (bad.length) {
+    bad.forEach(function (b) { fail('三', 'dusk 机身/机头配对错：' + b) })
+  } else {
+    ok('dusk 3 架 ×（body, head）逐对相同（§3.3 与 §9 一致）')
+  }
+}
+
+/* mono 没落地：它的独有色值一个都不许出现在代码里（连注释也不行）。
+ * dusk 的值已经合法，不能再算进「外来值」—— 否则一落地就会误报。 */
+const foreign = new Set()
+SET.mono.forEach(function (h) {
+  if (!SET.abyss.has(h) && !SET.dusk.has(h) && !SET.sem.has(h)) foreign.add(h)
 })
 
 const leaked = []
@@ -579,18 +628,15 @@ const leakedInSrc = diff(Array.from(hexSet(srcRaw)), Array.from(codeValues.value
 const allLeaks = leaked.concat(leakedInSrc)
 if (allLeaks.length) {
   allLeaks.forEach(function (s) {
-    fail('三', s + '\n             期望：本期只落地 abyss，dusk / mono 的值一个都不该在代码里' +
+    fail('三', s + '\n             期望：本期落地 abyss + dusk，mono 独有的值一个都不该在代码里' +
       '\n             实际：查到了 —— 换肤还没做，颜色先混进来了')
   })
 } else {
-  ok('dusk \u222a mono 独有的 ' + foreign.size + ' 个色值，代码里 0 处出现',
-    '（其中两套的 planePalette 各 6 个也包含在这 ' + foreign.size + ' 个里）')
-  const palDusk = pairsSec.slice(3, 6)
+  ok('mono 独有的 ' + foreign.size + ' 个色值，代码里 0 处出现',
+    '（其中 planePalette 的 6 个也包含在这 ' + foreign.size + ' 个里）')
   const palMono = pairsSec.slice(6, 9)
-  const hit = [].concat.apply([], palDusk.concat(palMono)).filter(function (h) {
-    return hexSet(srcRaw).has(h)
-  })
-  info('两套未落地皮肤的身份色：dusk 6 个 / mono 6 个，命中 ' + hit.length + ' 个' +
+  const hit = [].concat.apply([], palMono).filter(function (h) { return hexSet(srcRaw).has(h) })
+  info('未落地皮肤 mono 的身份色 6 个，命中 ' + hit.length + ' 个' +
     (hit.length ? '（' + hit.join(' ') + '）' : ''))
 }
 

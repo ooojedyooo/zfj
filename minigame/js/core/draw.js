@@ -324,11 +324,16 @@ function panelSheen(ctx, x, y, w, r, color) {
  */
 let bgStops = null
 let bgStopsFor = null
+let bgVersion = -1
 
 function background(ctx, layout, palette) {
   const c = palette || theme.color
-  if (bgStopsFor !== c) {
+  // theme.color 在换肤时是 in-place 改的（引用不变），所以光看引用认不出配色换了。
+  // 加上 colorVersion 这个信号，色标数组才会重建；数组引用一变，vGradient 的
+  // WeakMap 缓存也就自然失效（它按「色标引用 + 几何」复用渐变对象）。
+  if (bgStopsFor !== c || bgVersion !== theme.colorVersion) {
     bgStopsFor = c
+    bgVersion = theme.colorVersion
     bgStops = [
       { at: 0, color: c.bgTop },
       { at: 0.45, color: c.bg },

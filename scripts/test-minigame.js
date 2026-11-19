@@ -2471,6 +2471,87 @@ async function main() {
     b.layout()
   })
 
+  check('皮肤设置：白名单、坏结构回落、applySkin 原地更新且无残留', function () {
+    const skin = require('../minigame/js/core/skin')
+    const t = require('../minigame/js/core/theme')
+    const oldStore = STORE.zfj_skin
+    const oldSkinId = app.globalData.skinId
+    const oldThemeSkin = t.skin
+    const oldDanger = t.color.danger
+    const oldHit = t.color.hit
+
+    assert.strictEqual(skin.setSkinId('mono'), false, '未落地皮肤混进了白名单')
+    assert.strictEqual(skin.setSkinId('nonsense'), false, '未知 id 混进了白名单')
+
+    ;[{ v: 2, id: 'dusk' }, { v: 1, id: 'mono' }, { v: 1 }, 'bad', null].forEach(function (bad) {
+      STORE.zfj_skin = bad
+      assert.strictEqual(skin.getSkinId(), 'abyss', '坏结构没回落 abyss：' + JSON.stringify(bad))
+    })
+    STORE.zfj_skin = { v: 1, id: 'dusk' }
+    assert.strictEqual(skin.getSkinId(), 'dusk', '合法 dusk 没读到')
+    assert.strictEqual(skin.setSkinId('dusk'), true, '合法写入失败')
+
+    const color = t.color
+    const version = t.colorVersion
+    color.__stale = 'stale'   // 模拟旧皮肤独有的键：换肤后必须被删掉
+    t.applySkin('dusk')
+    assert.strictEqual(t.color, color, 'applySkin 换了 color 对象引用')
+    assert.strictEqual(t.skin, 'dusk', 'theme.skin 没跟着变')
+    assert.ok(t.colorVersion > version, 'colorVersion 没递增：背景渐变会留在旧皮肤')
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(color, '__stale'), false,
+      '旧皮肤独有的键残留下来了')
+    assert.strictEqual(color.boardFrame, t.skins.dusk.boardFrame, '黄铜框没换')
+    assert.strictEqual(color.boardBg, t.skins.dusk.boardBg, '底板没换')
+    assert.strictEqual(color.danger, oldDanger, '语义色被皮肤改掉了')
+    assert.strictEqual(color.hit, oldHit, 'hit 被皮肤改掉了')
+
+    // 换回来必须逐键等于最初那份（DUSK 没有偷塞自己的键进来）
+    t.applySkin('abyss')
+    assert.strictEqual(color.danger, oldDanger, '换回 abyss 后语义色变了')
+    assert.strictEqual(color.boardBg, t.skins.abyss.boardBg, '换回 abyss 后底板没还原')
+    assert.strictEqual(color.boardFrame, t.skins.abyss.boardFrame, '换回 abyss 后黄铜框没还原')
+
+    if (oldStore === undefined) delete STORE.zfj_skin
+    else STORE.zfj_skin = oldStore
+    t.applySkin(oldThemeSkin)
+    app.globalData.skinId = oldSkinId
+  })
+
+  check('大厅皮肤入口：点一下换到下一套，存储与画面同一帧更新', function () {
+    const t = require('../minigame/js/core/theme')
+    const lobby = app.get('lobby')
+    const oldStore = STORE.zfj_skin
+    const oldSkinId = app.globalData.skinId
+    const oldThemeSkin = t.skin
+
+    app.go('lobby')
+    const sb = lobby.geo.skinBtn
+    assert.ok(sb, '大厅没有皮肤入口')
+    const zone = lobby.zones.filter(function (z) {
+      return Math.abs(z.x - sb.x) < 0.5 && Math.abs(z.y - sb.y) < 0.5
+    })
+    assert.strictEqual(zone.length, 1, '皮肤入口没有唯一可点区域')
+    const skinMod = require('../minigame/js/core/skin')
+    const shownName = skinMod.skinName(app.globalData.skinId)
+    assert.ok(shownName && shownName.length >= 2, '当前皮肤名取不到，入口画不出来')
+    assert.ok(sb.w >= 60, '入口宽度放不下皮肤名：' + sb.w.toFixed(1))
+
+    const before = app.globalData.skinId
+    zone[0].onTap()
+    assert.notStrictEqual(app.globalData.skinId, before, '点了入口皮肤没变')
+    assert.strictEqual(app.globalData.skinId, t.skin, 'storage 名与当前主题不一致')
+    assert.deepStrictEqual(STORE.zfj_skin, { v: 1, id: t.skin }, '换新皮肤没写进 storage')
+    assert.strictEqual(lobby.geo.skinBtn.w, sb.w, '换肤后入口尺寸抖动')
+    zone[0].onTap()
+    assert.strictEqual(app.globalData.skinId, before, '第二次点没换回来')
+
+    if (oldStore === undefined) delete STORE.zfj_skin
+    else STORE.zfj_skin = oldStore
+    t.applySkin(oldThemeSkin)
+    app.globalData.skinId = oldSkinId
+    app.go('lobby')
+  })
+
   /* ---------- 收尾 ---------- */
   app.stop()
   offline._reset()

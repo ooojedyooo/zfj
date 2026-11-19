@@ -225,6 +225,56 @@ const ABYSS = {
   sweepGlow: '#BFF3FF'
 }
 
+/* ==================================================================
+ * DUSK · 暖砂沙盘 —— 值逐字抄自 art §3.3 / §9，一个 hex 都不许改
+ * ==================================================================
+ *
+ * 硬规则（art §3.3）：暖色只做结构，绝不进格子。
+ * frame = #8A6A45 是黄铜，只允许出现在底板外框 / 面板描边 / 分隔线 / 外圈环带；
+ * 格内只能是语义色、身份色、中性灰。所以 sweepColor 仍是冷白 #DCEFFF ——
+ * 暖金更好看，但会和 hit 橙混在同一格里，读不出「这是命中还是格子本来就暖」。
+ *
+ * 键名沿用 ABYSS 的旧名（boardBg←plate / boardFrame←frame / grid←bgGrid /
+ * gridLine←grid / axisText←axis / planeHeadInk←headInk / planePalette←palette），
+ * 见规格 §9.1 名字对照。100 多处绘制调用不因为换肤而改。
+ */
+const DUSK = {
+  bgTop: '#2A2018',
+  bg: '#1B1510',
+  bgBottom: '#100C09',
+  panel: '#241B14',
+  panelHi: '#33261B',
+  sheen: 'rgba(255,236,205,0.14)',
+  shade: 'rgba(0,0,0,0.42)',
+  grid: 'rgba(200,170,130,0.055)',       // ← 规格 bgGrid（页面雷达网格）
+  primary: '#A8DFFF',
+  primaryLight: '#2A2318',
+  primaryDark: '#D6F1FF',
+  primaryInk: '#201409',
+  card: '#241B14',
+  border: '#3A2C1F',
+  borderHi: '#57402C',
+  text: '#F7EFE3',
+  textMuted: '#C4AE92',
+  textFaint: '#9A8267',
+  gray: '#2A2118',
+  boardBg: '#191310',                    // ← 规格 plate
+  boardFrame: '#8A6A45',                 // ← 规格 frame：唯一的暖色结构色
+  gridLine: '#4A3A2B',                   // ← 规格 grid
+  planeHeadInk: '#201409',               // ← 规格 headInk
+  planePalette: [
+    { body: '#5b8abf', head: '#96aeca' },
+    { body: '#51bbb8', head: '#84c1bf' },
+    { body: '#9444af', head: '#c19ccd' }
+  ],
+  miss: '#6E7F8F',
+  missRing: 'rgba(150,168,180,0.70)',
+  cellDot: 'rgba(214,178,132,0.20)',
+  axisText: '#B39A7C',                   // ← 规格 axis
+  sweepColor: '#DCEFFF',
+  sweepGlow: '#DCEFFF'
+}
+
 /* 别名键 —— 「这个键没有自己的颜色，它就是另一个 token」。
  *
  * 提示环 / 选中环都不是独立颜色，就是主色。上一版各自抄了一份字面量，
@@ -244,7 +294,7 @@ const ALIASES = {
   selectRing: 'primary'  // 选中环
 }
 
-const SKINS = { abyss: ABYSS }
+const SKINS = { abyss: ABYSS, dusk: DUSK }
 
 /* 别名对**每一套**皮肤都生效：换肤时环自动跟着当套的主色走，
  * 不需要记得「加皮肤时还要改第二处」。 */
@@ -298,12 +348,38 @@ const PLANE_ART = {
   nozzle: 'rgba(2, 8, 16, 0.50)'         // 尾喷口块
 }
 
+/**
+ * 换肤。in-place 改 `module.exports.color`，不换对象引用 ——
+ * 场景里可能有人缓存了 `theme.color` 这个对象，换引用会让那些地方留在旧皮肤。
+ *
+ * 必须先删旧键再 assign：三套皮肤的键数不必相同，只 assign 新的会让旧皮肤独有的
+ * token 留下来，变成一只「谁都不管的第三只手」。删完再按
+ * 皮肤 → 占位色 → 状态色 → 语义色的顺序写回，权限顺序和初始化时完全一致。
+ *
+ * colorVersion 只服务缓存失效（draw.background 的色标数组按引用缓存）：
+ * 色对象引用没变，但内容变了，所以必须有第二个信号告诉缓存「配色换了」。
+ */
+function applySkin(id) {
+  const next = SKINS[id] ? id : SKIN
+  const color = module.exports.color
+  Object.keys(color).forEach(function (k) { delete color[k] })
+  Object.assign(color, SKINS[next], PLACEHOLDER, STATE, SEMANTIC)
+  module.exports.skin = next
+  module.exports.colorVersion += 1
+  return next
+}
+
 module.exports = {
   skin: SKIN,
+  colorVersion: 0,
 
   // 合并顺序就是权限顺序：皮肤 → 占位色 → 状态色 → 语义色。
   // 后三层都排在皮肤之后，皮肤改不动它们；语义色仍排最后，所以谁也抢不走 danger / hit。
   color: Object.assign({}, SKINS[SKIN], PLACEHOLDER, STATE, SEMANTIC),
+
+  // 已落地皮肤表。core/skin.js 用它给白名单兜底（id 必须真的有值表）。
+  skins: SKINS,
+  applySkin: applySkin,
 
   // 派生键的指向关系（见上面 ALIASES 那段）。导出是为了让
   // scripts/check-skin-tokens.js 能验「别名指向谁、值有没有跟着走」。

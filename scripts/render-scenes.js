@@ -20,6 +20,8 @@ const installWx = stub.installWx
 // 允许命令行覆盖屏宽/屏高：小屏 320×568、主屏 375×667、大屏 390×844 都得看一眼
 const ARG_W = parseInt(process.argv[2], 10)
 const ARG_H = parseInt(process.argv[3], 10)
+// 换肤预览：PREVIEW_SKIN=dusk node scripts/render-scenes.js 390 844
+const PREVIEW_SKIN = process.env.PREVIEW_SKIN || 'abyss'
 const INFO = stub.INFO
 if (ARG_W > 0 && ARG_H > 0) {
   INFO.windowWidth = ARG_W
@@ -35,7 +37,8 @@ if (ARG_W > 0 && ARG_H > 0) {
 
 const W = INFO.windowWidth
 const H = INFO.windowHeight
-const SUFFIX = (ARG_W > 0 && ARG_H > 0) ? '-' + W + 'x' + H : ''
+const SUFFIX = (ARG_W > 0 && ARG_H > 0 ? '-' + W + 'x' + H : '') +
+  (PREVIEW_SKIN !== 'abyss' ? '-' + PREVIEW_SKIN : '')
 
 /* ---------------- 固定随机源 ----------------
  *
@@ -56,7 +59,15 @@ Math.random = function () {
 /* ---------------- 装桩 ---------------- */
 
 const boot = new SvgCtx(W, H)
-installWx(boot)
+const STUB = installWx(boot)
+// 在 require 入口之前把 storage 摆好，走和真机一样的「启动读一次」路径。
+// 不手调 theme.applySkin —— 那样验的是「我改了主题」，不是「启动会不会选对皮肤」。
+if (PREVIEW_SKIN !== 'abyss') STUB.STORE.zfj_skin = { v: 1, id: PREVIEW_SKIN }
+
+// 这个脚本不 require game.js（它自己 createApp），所以 game.js 里那两行启动逻辑要在这里复现：
+// 读一次存储 → applySkin。否则 storage 摆好了也没人应用，出的图永远是默认皮肤。
+const skin = require('../minigame/js/core/skin')
+require('../minigame/js/core/theme').applySkin(skin.getSkinId())
 
 const { createApp } = require('../minigame/js/core/app')
 const offline = require('../minigame/js/shared/services/offlineGame')
@@ -79,6 +90,7 @@ const app = createApp({
 })
 
 app.globalData.playerId = 'p_preview'
+app.globalData.skinId = theme.skin
 app.globalData.cloudReady = false
 
 /* ---------------- 工具 ---------------- */

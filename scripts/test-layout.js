@@ -88,6 +88,19 @@ DEVICES.forEach(function (d) {
     ['搜索房间名', lobby.geo.searchBtn]
   ]
   entries.forEach(function (e) { inside(e[1], W, H, e[0], errs) })
+  // 皮肤入口：常驻可见、尺寸够点、有可点区，且不侵占任何主入口
+  inside(lobby.geo.skinBtn, W, H, '皮肤入口', errs)
+  const sb = lobby.geo.skinBtn
+  if (sb && sb.h < 24) errs.push('皮肤入口触控高度不足 ' + Math.round(sb.h))
+  if (sb) {
+    overlap(sb, lobby.geo.matchCards[0], '皮肤入口', '匹配卡', errs)
+    overlap(sb, lobby.geo.createBtn, '皮肤入口', '创建按钮', errs)
+    const zone = lobby.zones.filter(function (z) {
+      return Math.abs(z.x - sb.x) < 0.5 && Math.abs(z.y - sb.y) < 0.5 &&
+        Math.abs(z.w - sb.w) < 0.5 && Math.abs(z.h - sb.h) < 0.5
+    })
+    if (zone.length !== 1) errs.push('皮肤入口没有唯一可点区域（找到 ' + zone.length + ' 个）')
+  }
   overlap(lobby.geo.createBtn, lobby.geo.browseBtn, '创建按钮', '浏览按钮', errs)
   overlap(lobby.geo.browseBtn, lobby.geo.searchBtn, '浏览按钮', '搜索按钮', errs)
   // 匹配卡不能压到下面的入口按钮

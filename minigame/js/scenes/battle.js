@@ -21,6 +21,15 @@ RESULT_TEXT[RESULT.MISS] = '未击中'
 RESULT_TEXT[RESULT.HIT] = '击中！'
 RESULT_TEXT[RESULT.KILL] = '击毁！'
 
+// 等待态战报（§11.1.A 中档）。只说「我打过哪里、结果如何」：
+// 没有机号、没有机头/机翼字样、没有来自 incoming 的数据 —— T-08 禁的就是这个。
+const REPORT_TEXT = {}
+REPORT_TEXT[RESULT.MISS] = '未击中'
+REPORT_TEXT[RESULT.HIT] = '命中'
+REPORT_TEXT[RESULT.KILL] = '击毁'
+const REPORT_RESULTS = [RESULT.MISS, RESULT.HIT, RESULT.KILL]
+const REPORT_MAX = 3
+
 // 双击同一格 = 直接发射，省掉「再伸手去点发射按钮」那一步。
 // 300ms 是移动端判定双击的常用窗口：再短（<200ms）真机上几乎打不出来，
 // 再长（>400ms）又会让「想换个目标、连点了两下」被误判成开火。
@@ -47,6 +56,10 @@ class Battle extends Scene {
     this.turnSeconds = TIMEOUT.TURN
     this.myStreak = 0
     this.lastAutoAt = 0
+    // 战报流水：1 条 = 我的一炮。结果来自 marks，顺序来自 lastMove.at（见 syncBattleReport）
+    this.shotLog = []
+    this.lastReportAt = 0
+    this.wasReportSlot = false
     this.emoteBarOpen = false
     this.emoteBubble = null
     this.lastBattle = null
@@ -77,6 +90,9 @@ class Battle extends Scene {
     this.turnSeconds = this.stepSeconds
     this.myStreak = 0
     this.lastAutoAt = 0
+    this.shotLog = []
+    this.lastReportAt = 0
+    this.wasReportSlot = false
     this.resultHandled = false
     this.ticking = false
     this.tickAcc = 0
@@ -238,6 +254,7 @@ class Battle extends Scene {
 
     this.mine = mine
     this.incoming = incoming
+    this.syncBattleReport(b, mine)
     this.myTurn = myTurn
     this.finished = finished
     this.statusText = this.statusLabel(finished, myTurn)
@@ -255,7 +272,12 @@ class Battle extends Scene {
       this.app.feedback('超时 · 已自动轰炸 横' + lm.col + '，竖' + lm.row, 1400)
     }
 
-    const needLayout = focusChanged || (this.wasTurn !== myTurn) || (this.wasFinished !== finished)
+    // 战报只在等待态占位；首次拿到 lastBattle 时也要重排一次，否则那一格永远空着
+    const reportSlot = !finished && !myTurn && !!b.turnDeadline
+    const reportSlotChanged = reportSlot !== this.wasReportSlot
+    this.wasReportSlot = reportSlot
+    let needLayout = focusChanged || (this.wasTurn !== myTurn) || (this.wasFinished !== finished)
+    if (reportSlotChanged) needLayout = true
     this.wasTurn = myTurn
     this.wasFinished = finished
     if (needLayout) this.layout()
@@ -290,6 +312,120 @@ class Battle extends Scene {
     api.tick({ roomId: this.roomId }).catch(function () {}).then(function () {
       setTimeout(function () { self.ticking = false }, 2500)
     })
+  }
+
+  /* ---------------- 等待态战报 ---------------- */
+
+  /**
+   * 战报流水的数据源。
+   *
+   * 结果只认 `b.marks[我]`：值是 'miss' / 'hit' / 'kill'（rules.js RESULT），
+   * 服务端在 fire 时写入（cloudfunctions/game/index.js:214-215）。
+   * `incoming[我]` 是「打到我盘上的炮」，跟战报无关；`stats.shots` 只有计数。
+   *
+   * 顺序有个前提要写清楚：**marks 是 map，没有时间戳**。会话内用 `lastMove.at`
+   * （全状态唯一带 at 的字段）逐炮累积；首次进入 / 重连只能用 Object.keys(marks)
+   * 的插入序作种子。要让跨会话的顺序也权威，得后端加 shotLog 数组 —— 不在本改动范围内。
+   */
+  syncBattleReport(b, mine) {
+    const marks = mine || {}
+    const keyRegex = /^([1-9]),([1-9])$/
+    const parse = function (k) {
+      const m = keyRegex.exec(String(k || ''))
+      return m ? { row: Number(m[1]), col: Number(m[2]) } : null
+    }
+    const resultOf = function (k) {
+      const v = marks[k]
+      return REPORT_RESULTS.indexOf(v) >= 0 ? v : null
+    }
+    const make = function (k, at, born) {
+      const rc = parse(k)
+      if (!rc) return null
+      return { key: k, row: rc.row, col: rc.col, result: resultOf(k), at: at, born: born }
+    }
+
+    if (!this.shotLog.length) {
+      const keys = Object.keys(marks).filter(function (k) { return !!resultOf(k) && !!parse(k) })
+      this.shotLog = keys.slice(-REPORT_MAX).reverse()
+        .map(function (k) { return make(k, 0, -Infinity) })
+        .filter(function (e) { return !!e })
+    }
+
+    const lm = b && b.lastMove
+    if (lm && lm.by === this.myOpenid && lm.at && lm.at !== this.lastReportAt) {
+      const k = Number(lm.row) + ',' + Number(lm.col)
+      if (resultOf(k)) {
+        this.lastReportAt = lm.at
+        const known = this.shotLog.some(function (e) { return e.key === k })
+        if (!known) {
+          const e = make(k, lm.at, this.battleClock)
+          if (e) {
+            this.shotLog.unshift(e)
+            if (this.shotLog.length > REPORT_MAX) this.shotLog.length = REPORT_MAX
+          }
+        }
+      }
+    }
+
+    // marks 被重置（离线引擎重开一局）时，别留着已经不存在的炮
+    this.shotLog = this.shotLog.filter(function (e) { return resultOf(e.key) === e.result })
+  }
+
+  /** 等待态且有炮才显示。我方回合一律不显示 —— 那时读数优先于氛围。 */
+  reportVisible() {
+    return !this.finished && !this.myTurn && !!this.lastBattle && this.shotLog.length > 0
+  }
+
+  recentReport() {
+    return this.reportVisible() ? this.shotLog.slice(0, this.reportRows()) : []
+  }
+
+  reportRows() {
+    const g = this.geo && this.geo.report
+    if (!g) return 0
+    return Math.max(1, Math.min(REPORT_MAX, Math.floor((g.h - this.u(26)) / this.u(26))))
+  }
+
+  reportLine(e) {
+    return '横' + e.col + '竖' + e.row + ' · ' + (REPORT_TEXT[e.result] || '')
+  }
+
+  reportColor(e) {
+    const c = theme.color
+    return e.result === RESULT.KILL ? c.danger : (e.result === RESULT.HIT ? c.hit : c.miss)
+  }
+
+  /** 新条目 240ms 淡入；用 draw.alpha 拼色，不碰 globalAlpha（它会和扫掠淡入相乘两次）。 */
+  reportAlpha(e) {
+    if (!isFinite(e.born)) return 1
+    const ms = Math.max(0, this.battleClock - e.born)
+    return Math.max(0, Math.min(1, ms / theme.sweep.fadeMs))
+  }
+
+  drawBattleReport(ctx, u) {
+    const g = this.geo && this.geo.report
+    if (!g || !this.reportVisible()) return
+    const rows = this.recentReport()
+    if (!rows.length) return
+    const c = theme.color
+
+    draw.fillRect(ctx, g.x, g.y, g.w, g.h, c.card, u(theme.radius.lg))
+    draw.strokeRect(ctx, g.x, g.y, g.w, g.h, c.border, u(theme.radius.lg), 1)
+    draw.text(ctx, '战报流水', g.x + u(20), g.y + u(17), {
+      size: u(theme.size.tiny), weight: 500, color: c.textMuted
+    })
+
+    const rowH = u(26)
+    const y0 = g.y + u(26)
+    for (let i = 0; i < rows.length; i++) {
+      const e = rows[i]
+      const a = this.reportAlpha(e)
+      const y = y0 + i * rowH + rowH / 2
+      draw.circle(ctx, g.x + u(24), y, u(4), draw.alpha(this.reportColor(e), a))
+      draw.text(ctx, this.reportLine(e), g.x + u(38), y, {
+        size: u(theme.size.tiny), color: draw.alpha(c.text, a)
+      })
+    }
   }
 
   /* ---------------- 布局 ---------------- */
@@ -342,10 +478,32 @@ class Battle extends Scene {
     // 看着像半页空白。把余量对半分给「两棋盘之间」和「底部」，重心才落回中间。
     const used = g.mineBlock.h + gap + g.foeBlock.h
     const spare = Math.max(0, remain - used)
-    const gapExtra = Math.min(spare * 0.55, u(150))
+    let gapExtra = Math.min(spare * 0.55, u(150))
+    // 等待态：同一笔余量先供战报（三行 + 标题 + 上下留白），剩下的才给两盘之间。
+    // 不能先塞满 gapExtra 再说 —— 那正是「下半屏空白」的成因。
+    const wantReport = !this.finished && !this.myTurn && !!this.lastBattle && !!this.lastBattle.turnDeadline
+    if (wantReport) {
+      const need = u(6) + u(8) + u(26) + REPORT_MAX * u(26) + u(10)
+      const reserve = Math.min(spare, need)
+      gapExtra = Math.max(0, Math.min(gapExtra, spare - reserve))
+    }
     if (gapExtra > 0) {
       g.foeBlock.top = g.mineBlock.top + g.mineBlock.h + gap + gapExtra
       g.foeBoard = this.boardRect(g.foeBlock, g.foeSize, padOuter, titleH)
+    }
+
+    // 等待态下半屏的余量放战报。它只占「小盘下沿 → 底部按钮上沿」这一段：
+    // 不去动 gapExtra（那是两盘之间的呼吸），也不挤按钮。没空间就整块不画。
+    g.report = null
+    if (wantReport) {
+      const rTop = g.foeBlock.top + g.foeBlock.h + u(6)
+      const rBottom = g.bottomRects[0].y - u(8)
+      if (rBottom - rTop >= u(58)) {
+        g.report = {
+          x: u(40), y: rTop, w: L.W - u(80),
+          h: Math.min(rBottom - rTop, u(160))
+        }
+      }
     }
 
     // 点击非焦点区域 → 切换焦点
@@ -455,6 +613,9 @@ class Battle extends Scene {
         ? '已击毁 ' + this.foeDestroyed + '/' + this.foePlaneCount
         : '已击毁 ' + this.foeDestroyed + ' 架'
     })
+
+    // 等待态战报：只占小盘与底部按钮之间的空档，不碰棋盘，也不碰扫掠
+    this.drawBattleReport(ctx, u)
 
     // 出招区
     if (g.emojiBtn) {

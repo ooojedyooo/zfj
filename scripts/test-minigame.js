@@ -2335,6 +2335,142 @@ async function main() {
     b.layout()
   })
 
+  check('等待态战报：只取 marks[我]，不碰 incoming；最多 3 条且格式合法（T-08）', function () {
+    const b = app.get('battle')
+    const keys = ['shotLog', 'lastReportAt', 'lastBattle', 'myTurn', 'finished', 'myOpenid',
+      'battleClock', 'geo', 'focus', 'wasTurn', 'wasFinished', 'wasReportSlot',
+      'statusText', 'myShots', 'foeShots', 'myDestroyed', 'foeDestroyed', 'foePlaneCount', 'sweepAlpha']
+    const back = {}
+    keys.forEach(function (k) { back[k] = b[k] })
+
+    b.myOpenid = 'me'
+    b.battleClock = 0
+    b.shotLog = []
+    b.lastReportAt = 0
+    b.applyBattle({
+      turn: 'foe', finished: false,
+      marks: { me: { '4,7': 'hit', '2,3': 'miss', '6,5': 'kill', '8,1': 'miss', '1,9': 'hit' } },
+      incoming: { me: { '5,5': 'kill' } },
+      stats: { me: { shots: 5, kill: 1, lost: 0 } },
+      counts: {}, streak: {}, stepSeconds: 20, turnDeadline: Date.now() + 20000
+    })
+
+    assert.strictEqual(b.shotLog.length, 3, '战报数据不是 3 条：' + b.shotLog.length)
+    const rows = b.recentReport()
+    assert.ok(rows.length >= 1 && rows.length <= 3, '显示条数越界：' + rows.length)
+    assert.strictEqual(b.shotLog[0].key, '1,9', '最新一条不在最上面')
+    rows.forEach(function (e) {
+      assert.ok(/^横[1-9]竖[1-9] · (未击中|命中|击毁)$/.test(b.reportLine(e)),
+        '坐标/结果格式非法：' + b.reportLine(e))
+    })
+    const text = rows.map(function (e) { return b.reportLine(e) }).join('|')
+    assert.ok(text.indexOf('横5竖5') < 0, '战报混进了 incoming（对方打我盘的炮）')
+    assert.ok(!/机头|机翼|机身|朝向|几号/.test(text), '战报泄露了飞机形状（T-08）：' + text)
+
+    // 我方回合不显示：那时读数优先，不能让一块半透明面板压在棋盘上
+    b.myTurn = true
+    b.layout()
+    assert.strictEqual(b.reportVisible(), false, '我方回合还在显示战报')
+    assert.strictEqual(b.recentReport().length, 0, '我方回合 recentReport 非空')
+
+    keys.forEach(function (k) { b[k] = back[k] })
+    b.layout()
+  })
+
+  check('等待态战报：新条目按 lastMove 排到最上，240ms 淡入且同一炮不重复', function () {
+    const b = app.get('battle')
+    const keys = ['shotLog', 'lastReportAt', 'lastBattle', 'myTurn', 'finished', 'myOpenid',
+      'battleClock', 'geo', 'focus', 'wasTurn', 'wasFinished', 'wasReportSlot', 'sweepAlpha']
+    const back = {}
+    keys.forEach(function (k) { back[k] = b[k] })
+
+    b.myOpenid = 'me'
+    b.myTurn = false
+    b.finished = false
+    b.battleClock = 0
+    b.shotLog = []
+    b.lastReportAt = 0
+    b.lastBattle = { turn: 'foe', turnDeadline: Date.now() + 20000 }
+    const mine = { '3,3': 'miss', '4,4': 'hit' }
+    b.syncBattleReport(b.lastBattle, mine)
+    b.layout()
+    assert.strictEqual(b.shotLog.length, 2, '种子条数不对')
+
+    mine['7,8'] = 'kill'
+    b.syncBattleReport({ lastMove: { row: 7, col: 8, result: 'kill', by: 'me', at: 1234 } }, mine)
+    assert.strictEqual(b.shotLog[0].key, '7,8', '新炮没排到最上')
+    assert.strictEqual(b.shotLog.length, 3, '新炮没进流水')
+    const shown = b.recentReport().length
+    assert.ok(shown >= 1 && shown <= 3, '等待态显示条数越界：' + shown)
+    assert.strictEqual(b.reportAlpha(b.shotLog[0]), 0, '新条目没有从 0 开始淡入')
+
+    // watcher 每次快照都送同一条 lastMove：同一炮只能记一次
+    b.syncBattleReport({ lastMove: { row: 7, col: 8, result: 'kill', by: 'me', at: 1234 } }, mine)
+    assert.strictEqual(b.shotLog.length, 3, '同一炮被记了两次')
+
+    b.update(120)
+    assert.ok(Math.abs(b.reportAlpha(b.shotLog[0]) - 0.5) < 1e-9, '120ms 时不是半透明')
+    b.update(120)
+    assert.strictEqual(b.reportAlpha(b.shotLog[0]), 1, '240ms 后没收敛到 1')
+    assert.strictEqual(b.reportAlpha(b.shotLog[1]), 1, '旧条目不该重新淡入')
+
+    // 结果只认 marks，lastMove 的转述不算数
+    mine['7,8'] = 'miss'
+    b.syncBattleReport(b.lastBattle, mine)
+    assert.strictEqual(b.shotLog.some(function (e) { return e.key === '7,8' }), false,
+      'marks 变了，旧结果却还留在战报里')
+
+    keys.forEach(function (k) { b[k] = back[k] })
+    b.layout()
+  })
+
+  check('等待态战报：语义色沿用现有 token，且只占空档、不挤棋盘和按钮', function () {
+    const b = app.get('battle')
+    const c = theme.color
+    assert.strictEqual(b.reportColor({ result: 'kill' }), c.danger, '击毁不是 danger 红')
+    assert.strictEqual(b.reportColor({ result: 'hit' }), c.hit, '命中不是 hit 橙')
+    assert.strictEqual(b.reportColor({ result: 'miss' }), c.miss, '未中不是中性灰')
+
+    const keys = ['shotLog', 'lastReportAt', 'lastBattle', 'myTurn', 'finished', 'myOpenid',
+      'battleClock', 'geo', 'focus', 'wasTurn', 'wasFinished', 'wasReportSlot', 'sweepAlpha']
+    const back = {}
+    keys.forEach(function (k) { back[k] = b[k] })
+    b.myOpenid = 'me'
+    b.myTurn = true
+    b.finished = false
+    b.applyBattle({
+      turn: 'me', finished: false, marks: {}, incoming: {}, stats: {}, counts: {},
+      streak: {}, stepSeconds: 20, turnDeadline: Date.now() + 20000
+    })
+
+    b.myTurn = false
+    b.applyBattle({
+      turn: 'foe', finished: false,
+      marks: { me: { '1,1': 'hit', '1,2': 'miss', '1,3': 'kill' } },
+      incoming: {}, stats: {}, counts: {}, streak: {}, stepSeconds: 20,
+      turnDeadline: Date.now() + 20000
+    })
+    const g = b.geo
+    assert.ok(g.report, '等待态没给战报留位置')
+    assert.ok(g.report.y >= g.foeBlock.top + g.foeBlock.h, '战报压到了小盘')
+    assert.ok(g.report.y + g.report.h <= g.surrenderBtn.y, '战报压到了底部按钮')
+    assert.ok(b.recentReport().length <= 3, '战报超过 3 条')
+
+    // 「不挤棋盘」的正确基线是**同为等待态、只是没有炮**的排版。
+    // 拿轮到我时的敌方大盘来比是错的：那块盘本来就该在等待态缩成缩略盘。
+    const sizeWith = { foe: b.geo.foeBoard.size, mine: b.geo.mineBoard.size }
+    const shots = b.shotLog
+    b.shotLog = []
+    b.layout()
+    assert.strictEqual(b.geo.foeBoard.size, sizeWith.foe, '战报把敌方盘挤小了')
+    assert.strictEqual(b.geo.mineBoard.size, sizeWith.mine, '战报把我方盘挤小了')
+    b.shotLog = shots
+    b.layout()
+
+    keys.forEach(function (k) { b[k] = back[k] })
+    b.layout()
+  })
+
   /* ---------- 收尾 ---------- */
   app.stop()
   offline._reset()

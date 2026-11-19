@@ -483,6 +483,26 @@ async function main() {
     // onEnter → sync → applyBattle，焦点、排版、扫掠开关全部由产品代码决定。
     const g = offline._getGame && offline._getGame()
     if (g && !g.finished) {
+      // 战报流水要用真实引擎的三炮，不手改 marks —— 否则出图验的是「我塞进去的三条」，
+      // 而不是「界面会不会把自己打出的炮排出来」。三种结果各来一发，顺便在图上验语义色。
+      const foeCells = []
+      ;(g.foeDeployed || []).forEach(function (p) {
+        (p.cells || []).forEach(function (c) { foeCells.push(c) })
+      })
+      const head = foeCells.filter(function (c) { return c.isHead })[0]
+      const body = foeCells.filter(function (c) { return !c.isHead })[0]
+      let miss = null
+      for (let r = 1; r <= 9 && !miss; r++) {
+        for (let col = 1; col <= 9 && !miss; col++) {
+          if (!foeCells.some(function (c) { return c.row === r && c.col === col })) miss = { row: r, col: col }
+        }
+      }
+      const samples = [head, body, miss].filter(Boolean).map(function (c) { return [c.row, c.col] })
+      for (let i = 0; i < samples.length && !g.finished; i++) {
+        g.myTurn = true
+        const out = await offline.fire({ row: samples[i][0], col: samples[i][1] })
+        console.log('  战报样本 ' + (i + 1) + '：横' + samples[i][1] + '竖' + samples[i][0] + ' ' + out.result)
+      }
       g.myTurn = false
       g.turnDeadline = Date.now() + 20000
       app.reset('battle')

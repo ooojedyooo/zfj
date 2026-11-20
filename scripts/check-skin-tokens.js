@@ -36,7 +36,7 @@ const SPEC_FILE = path.join(ROOT, 'design', 'art', 'skin-system.md')
 const THEME_FILE = path.join(ROOT, 'minigame', 'js', 'core', 'theme.js')
 
 /** 规格版本指纹（sha1 前 12 位）。规格一改，这里就要跟着改 —— 这是故意的。 */
-const SPEC_SHA1_12 = '34008b451c6a'
+const SPEC_SHA1_12 = '1f7267a877a8'
 
 /* 色值只以**模式**出现，永远不写字面量（见文件头「坑 1」） */
 const HEX_RE = /#[0-9a-f]{6}/gi
@@ -175,6 +175,8 @@ if (!secAbyss || !secDusk || !secMono || !secContract) {
   process.exit(2)
 }
 
+const contInteraction = slice(secContract, 'const INTERACTION', 'const ALPHA')
+const contAlpha = slice(secContract, 'const ALPHA', 'const SEMANTIC')
 const contSem = slice(secContract, 'const SEMANTIC', 'const STATE')
 const contState = slice(secContract, 'const STATE', 'const SWEEP')
 const contSweep = slice(secContract, 'const SWEEP', 'const PLANE_ART')
@@ -185,10 +187,10 @@ const contAbyss = slice(secContract, 'abyss: {', 'dusk: {')
 const contDusk = slice(secContract, 'dusk: {', 'mono: {')
 const contMono = slice(secContract, 'mono: {', 'module.exports')
 
-if (!contSem || !contState || !contSweep || !contPlaneArt || !contPlaceholder ||
-    !contAlias || !contAbyss || !contDusk || !contMono) {
-  console.error('  §9 契约块结构变了：SEMANTIC / STATE / SWEEP / PLANE_ART / PLACEHOLDER /' +
-    ' ALIASES / abyss / dusk / mono 里有取不到的。')
+if (!contInteraction || !contAlpha || !contSem || !contState || !contSweep ||
+    !contPlaneArt || !contPlaceholder || !contAlias || !contAbyss || !contDusk || !contMono) {
+  console.error('  §9 契约块结构变了：INTERACTION / ALPHA / SEMANTIC / STATE / SWEEP / PLANE_ART /' +
+    ' PLACEHOLDER / ALIASES / abyss / dusk / mono 里有取不到的。')
   process.exit(2)
 }
 
@@ -242,18 +244,61 @@ function collectHexValues(obj) {
 
 const codeValues = collectHexValues(theme)
 
-/* 值域清点 —— 盲区必须自己露出来。
- * `collectHexValues` 只认 `#rrggbb`。theme 里还有一批 rgba() 字面量，
- * 它们**一个都没参与断言一的逐值比对**，所以「每个色值都登记过」这句话
- * 严格讲只对 hex 成立。这里不假装验它（规格把前沿线的 α 写成 `edge: 0.20`、
- * 底色写成 `sweepColor`，逐值比对 rgba 会误报），只把数量摆在每次运行的输出里 ——
- * 盲区不写出来就会在下一轮被当成「已经验过了」。 */
-const RGBA_RE = /rgba?\([^)]*\)/gi
-const codeRgba = new Set((JSON.stringify(theme).match(RGBA_RE) || []).map(function (s) {
-  return s.toLowerCase().replace(/\s+/g, '')
-}))
-info('值域：' + codeValues.size + ' 个 hex 槽位参与逐值比对；另有 ' + codeRgba.size +
-  ' 个 rgba 字面量未参与（已知盲区，见脚本内注释）')
+/* 值域清点 —— PR-5 起 rgba 不再只有一个「已知盲区」的数量。
+ *
+ * 旧版把 JSON.stringify(theme) 里的 rgba 收进 Set，只报去重值数（25）。那有两个坑：
+ *   ① 槽位数（26）被去重吃掉一个（conflict 与 ghostBad 同值）；
+ *   ② 若哪天公式化后值不再是 rgba 字符串，计数会自己掉下去，看起来像「修好了」。
+ * 规格 §9.4 的方案保留了字面量锚点，所以槽位数**不该掉**；掉了就是真漏，直接红。
+ *
+ * 这里按 JSON 路径枚举，并显式打印：槽位数 / 去重值数 / 已登记数 / 派生态数。 */
+const specRgbaBySkin = {}
+;[['abyss', contAbyss], ['dusk', contDusk], ['mono', contMono]].forEach(function (p) {
+  specRgbaBySkin[p[0]] = parseEntries(p[1]).filter(function (e) { return e.kind === 'rgba' }).length
+})
+const nStateRgba = parseEntries(contState).filter(function (e) { return e.kind === 'rgba' }).length
+const nPlaneRgba = parseEntries(contPlaneArt).filter(function (e) { return e.kind === 'rgba' }).length
+const specRgba = new Set()
+;[contState, contPlaneArt, contAbyss, contDusk, contMono].forEach(function (b) {
+  parseEntries(b).forEach(function (e) {
+    if (e.kind === 'rgba') specRgba.add(normRgba(e.value))
+  })
+})
+
+const rgbaSlots = collectRgbaSlots(theme)
+const rgbaUniq = new Set(rgbaSlots.map(function (s) { return normRgba(s.value) }))
+const rgbaRegistered = rgbaSlots.filter(function (s) { return specRgba.has(normRgba(s.value)) })
+const rgbaUnregistered = rgbaSlots.filter(function (s) { return !specRgba.has(normRgba(s.value)) })
+const derivedCount = Object.keys(theme.alpha || {}).filter(function (k) {
+  return /Base$/.test(k) && theme.alpha[k] !== 'self'
+}).length
+
+/* 期望槽位数从契约推导，不写死：STATE + PLANE_ART + 当前皮肤的 color 副本 + 各皮肤表。 */
+const activeSkin = theme.skin
+const expectedRgbaSlots = (specRgbaBySkin[activeSkin] || 0) +
+  Object.keys(theme.skins || {}).reduce(function (n, id) {
+    return n + (specRgbaBySkin[id] || 0)
+  }, 0) + nStateRgba + nPlaneRgba
+
+if (rgbaSlots.length !== expectedRgbaSlots) {
+  fail('一', 'rgba 字面量槽位数 ' + rgbaSlots.length + '，按 §9 契约推导应为 ' + expectedRgbaSlots +
+    '\n             期望：STATE ' + nStateRgba + ' + PLANE_ART ' + nPlaneRgba + ' + color(' +
+    activeSkin + ') ' + (specRgbaBySkin[activeSkin] || 0) + ' + 皮肤表 ' +
+    Object.keys(theme.skins || {}).map(function (id) { return id + ' ' + specRgbaBySkin[id] }).join(' + ') +
+    '\n             实际少了就说明有字面量被公式替掉了 —— 锚点掉了不是「修好了」，是断言失效')
+} else {
+  ok('rgba 槽位数与 §9 契约推导一致：' + expectedRgbaSlots + ' 处字面量锚点仍在')
+}
+if (rgbaUnregistered.length) {
+  rgbaUnregistered.forEach(function (s) {
+    fail('一', 'rgba 字面量 ' + s.path + ' = ' + s.value + '：规格 §9 的 rgba 槽位里查不到这个值')
+  })
+} else {
+  ok('rgba 槽位 ' + rgbaRegistered.length + '/' + rgbaSlots.length + ' 的值都能在 §9 rgba 槽位里对上')
+}
+info('值域：' + codeValues.size + ' 个 hex 槽位参与逐值比对；rgba 槽位 ' + rgbaSlots.length +
+  ' 个 / 去重值 ' + rgbaUniq.size + ' 个 / 已登记 ' + rgbaRegistered.length +
+  ' 个 / 派生态 ' + derivedCount + ' 条（ALPHA 表 Base ≠ self）')
 
 /* 规格 token 表 = 已登记。**只认 token 表，不认散文** ——
  * 规格正文里还留着被否决/历史的色值（「原来是 X」这种），
@@ -400,6 +445,46 @@ function normCode(v, kind) {
   return String(v)
 }
 
+/** rgba 拆成 [r,g,b,a]；不是 rgb(a) 字符串就返回 null。 */
+function rgbaParts(v) {
+  const m = /^rgba?\(([^)]*)\)$/i.exec(String(v).trim())
+  if (!m) return null
+  const p = m[1].split(',').map(function (x) { return parseFloat(x) })
+  if (p.length < 3 || p.some(function (n) { return !isFinite(n) })) return null
+  return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1]
+}
+
+/** rgba 语义归一化：0.30 与 0.3、空白差异都不是差异 —— 比数不比格式。 */
+function normRgba(v) {
+  const p = rgbaParts(v)
+  return p ? p.join(',') : String(v).toLowerCase().replace(/\s+/g, '')
+}
+
+/** rgba 的 α；非 rgba 返回 null。Factor / Divisor 要用它当被乘/被除数。 */
+function alphaOf(v) {
+  const p = rgbaParts(v)
+  return p ? p[3] : null
+}
+
+/** 按 JSON 路径枚举导出的 rgba 槽位 —— 不再用 Set 去重后只报一个数量。 */
+function collectRgbaSlots(obj) {
+  const out = []
+  ;(function walk(node, p) {
+    if (typeof node === 'string') {
+      if (/^rgba?\(/i.test(node.trim())) out.push({ path: p, value: node })
+      return
+    }
+    if (Array.isArray(node)) {
+      node.forEach(function (v, i) { walk(v, p + '[' + i + ']') })
+      return
+    }
+    if (node && typeof node === 'object') {
+      Object.keys(node).forEach(function (k) { walk(node[k], p ? p + '.' + k : k) })
+    }
+  })(obj, '')
+  return out
+}
+
 /**
  * 契约块 → 代码对象，逐名字逐值。返回 { checked, bad[] }
  * 只做「契约里有 → 代码里必须有且相等」这一个方向；代码里的多余键由断言四管。
@@ -470,12 +555,13 @@ if (tokens.length < 20) {
   }
 }
 
-/* 两块已落地皮肤各自的 hex token 都要逐名逐值对上。
+/* 两块已落地皮肤各自的 token 都要逐名逐值对上 —— hex 与 rgba 都查。
  *
- * 为什么只比到 SKINS[皮肤] 这一层、又只比 hex：theme.color 是合并后的当前视图，
- * 皮肤块里少一个键未必看得出来；而 SKINS 块里的 rgba（plateShadow / sheen / …）
- * 目前代码没有同名键，是既有的已知盲区（脚本开头已打印 rgba 盲区数量），
- * 不能在这里突然把它变成硬失败 —— 那是拿旧账当新错。
+ * 旧版只用 contractTokens（只认 '#hex'），于是每套皮肤 5 类 rgba
+ * （bgGrid / cellDot / missRing / sheen / shade）整块被跳过 —— 「漏掉」在检查里
+ * 等于「验过了」。PR-5 补 rgba 分支：沿用 parseEntries + 语义归一化，
+ * 认 0.30 = 0.3、认空白差异。plateShadow 已按规格 §9.3 从契约撤掉，不开特例。
+ * mono 未落地，只登记 alpha，不进这里的硬失败。
  * palette 是对象数组，逐对比较在断言二/三里做，那里比这里严（计数检查抓不到配对漂移）。
  */
 ;[['abyss', theme.skins && theme.skins.abyss], ['dusk', theme.skins && theme.skins.dusk]]
@@ -485,7 +571,8 @@ if (tokens.length < 20) {
       fail('一·反向', 'theme.skins.' + pair[0] + ' 不存在 —— 断言三也过不了')
       return
     }
-    const t = contractTokens(pair[0] === 'abyss' ? contAbyss : contDusk)
+    const block = pair[0] === 'abyss' ? contAbyss : contDusk
+    const t = contractTokens(block)
     const bad = []
     t.forEach(function (x) {
       const key = CODE_KEY[x.name] || x.name
@@ -495,7 +582,159 @@ if (tokens.length < 20) {
     })
     if (bad.length) bad.forEach(function (b) { fail('一·反向', pair[0] + '：' + b) })
     else ok('SKINS.' + pair[0] + ' ' + t.length + ' 个 hex token 逐名字逐值对上')
+
+    const rv = parseEntries(block).filter(function (e) { return e.kind === 'rgba' })
+    const badRgba = []
+    rv.forEach(function (e) {
+      const key = CODE_KEY[e.name] || e.name
+      const got = skinObj[key]
+      if (typeof got !== 'string') badRgba.push(e.name + '→' + key + '：皮肤块里没有这个 rgba 键')
+      else if (normRgba(got) !== normRgba(e.value)) {
+        badRgba.push(e.name + '→' + key + '：期望 ' + e.value + '，实际 ' + got)
+      }
+    })
+    if (badRgba.length) {
+      badRgba.forEach(function (b) { fail('一·反向', pair[0] + '：' + b) })
+    } else {
+      ok('SKINS.' + pair[0] + ' ' + rv.length + ' 个 rgba token 逐名字逐值对上')
+    }
   })
+
+/* ================== 断言一·派生：ALPHA 表三步机验（规格 §9.4） ================== */
+console.log('\n断言一 · 派生：ALPHA 每条 Base + α 必须能重建 §9 的 rgba 字面量')
+
+const alphaTable = theme.alpha
+if (!alphaTable || typeof alphaTable !== 'object') {
+  fail('一·派生', 'theme.alpha 不存在 —— 规格 §9 的 ALPHA 表没有落地')
+} else {
+  /* 契约 rgba 槽位 → 字面量 + 它在 theme 导出里的落点 */
+  const slotValue = {}
+  const slotMeta = {}
+  function addSlots(block, prefix, container, skin) {
+    parseEntries(block).forEach(function (e) {
+      if (e.kind !== 'rgba') return
+      const key = (prefix ? prefix + '_' : '') + e.name
+      slotValue[key] = e.value
+      slotMeta[key] = { container: container, skin: skin, specName: e.name }
+    })
+  }
+  addSlots(contState, '', 'color', null)
+  addSlots(contPlaneArt, '', 'planeArt', null)
+  addSlots(contAbyss, 'abyss', 'skin', 'abyss')
+  addSlots(contDusk, 'dusk', 'skin', 'dusk')
+  addSlots(contMono, 'mono', 'skin', 'mono')
+
+  const contractNames = new Set()
+  ;[contInteraction, contAlpha, contSem, contState, contSweep, contPlaneArt,
+    contPlaceholder, contAbyss, contDusk, contMono, contAlias].forEach(function (b) {
+    declaredNames(b).forEach(function (n) { contractNames.add(n) })
+  })
+
+  const declared = Object.keys(alphaTable)
+    .filter(function (k) { return k.slice(-4) === 'Base' })
+    .map(function (k) { return k.slice(0, -4) })
+
+  const gapBad = []
+  Object.keys(slotValue).forEach(function (k) {
+    if (declared.indexOf(k) < 0) gapBad.push('ALPHA 表缺少 rgba 槽位 ' + k + ' 的 Base 登记')
+  })
+  declared.forEach(function (k) {
+    if (!slotValue[k]) gapBad.push('ALPHA 表登记了 ' + k + '，但 §9 里没有这个 rgba 槽位')
+  })
+  if (gapBad.length) gapBad.forEach(function (b) { fail('一·派生', b) })
+  else ok('ALPHA 表与 §9 rgba 槽位一一对应：' + declared.length + ' 条')
+
+  /* 顶层冻结青：不进 color，也不是 primary 的别名（G2 的真实 bug 就在这里） */
+  if (!theme.interaction || !/^#[0-9a-f]{6}$/i.test(String(theme.interaction.ok))) {
+    fail('一·派生', 'theme.interaction.ok 必须是顶层冻结的 hex token')
+  } else if (theme.color.interaction != null || theme.color.ok != null ||
+             (theme.aliases || {}).ok != null || (theme.aliases || {}).interaction != null) {
+    fail('一·派生', 'INTERACTION.ok 不得进 color，也不得登记成 primary 的别名')
+  } else {
+    ok('INTERACTION.ok 冻结在顶层，未进 color / aliases')
+  }
+
+  function rgbOf(v) {
+    if (/^#[0-9a-f]{6}$/i.test(String(v))) {
+      const s = String(v)
+      return [parseInt(s.substr(1, 2), 16), parseInt(s.substr(3, 2), 16), parseInt(s.substr(5, 2), 16)]
+    }
+    const p = rgbaParts(v)
+    return p ? [p[0], p[1], p[2]] : null
+  }
+  function resolveBase(name, key) {
+    if (name === 'self') return slotValue[key]
+    if (name === 'interactionOk') {
+      return contractNames.has('ok') && theme.interaction ? theme.interaction.ok : null
+    }
+    if (!contractNames.has(name)) return null
+    if (theme.color && theme.color[name] != null) return theme.color[name]
+    if (theme.planeArt && theme.planeArt[name] != null) return theme.planeArt[name]
+    return null
+  }
+  function codeValue(key, meta) {
+    if (meta.container === 'color') return theme.color[key]
+    if (meta.container === 'planeArt') return theme.planeArt[key]
+    const skin = theme.skins && theme.skins[meta.skin]
+    return skin ? skin[CODE_KEY[meta.specName] || meta.specName] : null
+  }
+
+  const stepBad = []
+  let stepOK = 0
+  let monoSkip = 0
+  declared.forEach(function (key) {
+    const meta = slotMeta[key]
+    const baseName = alphaTable[key + 'Base']
+    /* ① Base 指向的 token 在契约里存在 */
+    const base = resolveBase(baseName, key)
+    if (base == null || rgbOf(base) == null) {
+      stepBad.push(key + '：Base ' + baseName + ' 在契约里不存在或不是颜色')
+      return
+    }
+    let a = alphaTable[key + 'Alpha']
+    const factor = alphaTable[key + 'Factor']
+    const divisor = alphaTable[key + 'Divisor']
+    if (typeof factor === 'number' || typeof divisor === 'number') {
+      const baseAlpha = alphaOf(base)
+      if (baseAlpha == null) {
+        stepBad.push(key + '：Factor/Divisor 的 Base 没有 α 可供派生')
+        return
+      }
+      /* 写公式不写结果：keelTail = 0.30 × 0.07；lightDim = 0.75 ÷ 2 */
+      a = typeof factor === 'number' ? baseAlpha * factor : baseAlpha / divisor
+      a = Number(a.toFixed(6))
+    }
+    if (typeof a !== 'number' || !isFinite(a)) {
+      stepBad.push(key + '：α 不是有效数字')
+      return
+    }
+    /* ② at(Base, α) 的结果 == 契约里该槽位的 rgba 字面量 */
+    const rgb = rgbOf(base)
+    const rebuilt = 'rgba(' + rgb[0] + ', ' + rgb[1] + ', ' + rgb[2] + ', ' + a + ')'
+    if (normRgba(rebuilt) !== normRgba(slotValue[key])) {
+      stepBad.push(key + '：at(' + baseName + ', ' + a + ') = ' + rebuilt +
+        '，契约字面量是 ' + slotValue[key])
+      return
+    }
+    /* ③ theme.js 导出值 == 字面量。mono 未落地，只验①②，不算它的账。 */
+    if (meta.container === 'skin' && meta.skin === 'mono' && !(theme.skins && theme.skins.mono)) {
+      monoSkip++
+      stepOK++
+      return
+    }
+    const got = codeValue(key, meta)
+    if (typeof got !== 'string' || normRgba(got) !== normRgba(slotValue[key])) {
+      stepBad.push(key + '：theme.js 导出 ' + String(got) + '，契约字面量是 ' + slotValue[key])
+      return
+    }
+    stepOK++
+  })
+  if (stepBad.length) stepBad.forEach(function (b) { fail('一·派生', b) })
+  else {
+    ok('ALPHA ' + stepOK + ' 条三步机验通过' +
+      (monoSkip ? '（其中 mono ' + monoSkip + ' 条只验①②，皮肤未落地）' : ''))
+  }
+}
 
 /* STATE / SWEEP / PLANE_ART 三块：值不是 hex，用能认 rgba / 数字 / 数组的解析器。
  * 这三块以前整块漏在检查之外 —— 「漏掉」在检查里等于「验过了」。 */
@@ -775,40 +1014,39 @@ if (!pureAbsent.length) {
   })
 }
 
-/* planeArt 的两个派生值：契约把它们写在注释里（「机尾端 α×0.07」「尾喷口亮缝取 α 减半」），
- * 没有自己的 token 行。它们属于 §9.3 G1（派生值要写公式而不是写值），所以不塞进「待登记」——
- * 那会让这条永远清不了零，而它需要的不是一次决定，是一次公式化。
+/* planeArt 的派生值：PR-5 起 keelTail / lightDim 已有自己的 token 行（§9 PLANE_ART），
+ * 派生关系登记在 ALPHA 表（Factor / Divisor），字面量只是 checker 的断言锚点。
  *
- * **但「不塞进待登记」不等于「不管」**：G1 那一行点过名的就是那两个，
- * 这里拿 G1 的原文当白名单底（从规格里抓，不是手写），多出来的键一律硬失败 ——
- * 否则「往 planeArt 加新键」就成了绕过断言四的后门：它会被这句话顺手归进「派生值」。 */
+ * 旧版从 §9.3 G1 表格行的反引号里抓名字，规范一重写解析就失效 —— fail-closed
+ * 但报错误导。现在从 ALPHA 表抓：planeArt 里 Base ≠ 'self' 的键就是派生值。
+ * 守卫不撤：往 planeArt 加新键不能绕过断言四 —— 既不在契约 token 行、
+ * 又没在 ALPHA 表登记为派生，一律硬失败。 */
 ;(function () {
-  const gapsSec = slice(md, '### 9.3', '## 附 A')
-  const g1Row = (String(gapsSec).match(/^\|\s*\*\*G1\*\*.*$/m) || [''])[0]
-  const g1Named = new Set()
-  ;(g1Row.match(/`[^`]+`/g) || []).forEach(function (tok) {
-    tok.slice(1, -1).split(/\s*\/\s*/).forEach(function (part) {
-      const tail = part.trim().split('.').pop().replace(/[^\w]/g, '')
-      if (tail) g1Named.add(tail)
-    })
+  const alpha = theme.alpha || {}
+  const derived = Object.keys(theme.planeArt || {}).filter(function (k) {
+    return alpha[k + 'Base'] && alpha[k + 'Base'] !== 'self'
   })
-
   const extras = Object.keys(theme.planeArt || {}).filter(function (k) {
-    return !contractKeys.has(k)
+    return !contractKeys.has(k) && derived.indexOf(k) < 0
   })
-  const covered = extras.filter(function (k) { return g1Named.has(k) })
-  const uncovered = extras.filter(function (k) { return !g1Named.has(k) })
 
-  if (uncovered.length) {
-    uncovered.forEach(function (k) {
-      fail('四', 'theme.planeArt.' + k + ' 既不在契约 token 行里，也不在 §9.3 G1 点过的名里' +
-        '\n             期望：要么给它一个 §9 位置，要么让 art 把它写进 G1（说明是哪个值的派生）' +
+  if (extras.length) {
+    extras.forEach(function (k) {
+      fail('四', 'theme.planeArt.' + k + ' 既不在契约 token 行里，也不在 ALPHA 表登记为派生值' +
+        '\n             期望：要么给它一个 §9 位置，要么在 ALPHA 表里写清它派生于谁' +
         '\n             实际：两边都没有 —— 这条不能算「已知缺口」，它只是个没登记的新键')
     })
   }
-  if (covered.length) {
-    info('planeArt 不在契约 token 行里、但 G1 点过名的派生值：' + covered.join(' / ') +
-      '（PR-5 收成公式）')
+  const noFormula = derived.filter(function (k) {
+    return alpha[k + 'Factor'] == null && alpha[k + 'Divisor'] == null
+  })
+  if (noFormula.length) {
+    noFormula.forEach(function (k) {
+      fail('四', 'theme.planeArt.' + k + ' 在 ALPHA 表里声明了 Base，却没有 Factor/Divisor' +
+        '\n             派生值要写公式不写结果；只写 Base + Alpha 等于又抄了一份字面量')
+    })
+  } else if (derived.length) {
+    info('planeArt 派生值（ALPHA 表登记，公式化）：' + derived.join(' / '))
   }
 })()
 

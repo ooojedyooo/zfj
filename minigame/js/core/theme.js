@@ -66,6 +66,100 @@ const PLACEHOLDER = {
 }
 
 /* ==================================================================
+ * 顶层 · INTERACTION —— 冻结的交互青色源（规格 §9 1058-1060）
+ * ==================================================================
+ *
+ * ghostOk / dragOrigin 原先写成 `primary@α`，而 primary 是皮肤 token
+ * （abyss #2BE0C8 / dusk #A8DFFF）。换肤后「这里可以落子」的青色跟着皮肤变，
+ * 直接破坏 STATE 的立层理由 —— 状态画在皮肤**之上**，不由皮肤决定。
+ *
+ * 值取 abyss 的 primary 字面量并**冻结在此**。它不进 color、不进任何 skin、
+ * 也不是 primary 的别名：以后 primary 怎么改都不许动它，要改只能改规格。
+ */
+const INTERACTION = { ok: '#2BE0C8' }
+
+/* ==================================================================
+ * 顶层 · ALPHA —— rgba 表达规范登记（规格 §9 1073-1141）
+ * ==================================================================
+ *
+ * 一张带透明度的颜色 = 底色 token + 独立 α 参数。
+ *   <key>Base   底色来源：已登记 token 名；'self' = 取该槽位 rgba 字面量自身的 RGB
+ *   <key>Alpha  0..1 的 α；派生项改写成 <key>Factor（乘）或 <key>Divisor（除），不写结果
+ *
+ * 这张表是派生关系的唯一权威。STATE / PLANE_ART / 皮肤块里的 rgba 字面量
+ * 只是 checker 的逐值断言锚点（下游产物），两者不符时改字面量，不改这张表。
+ */
+const ALPHA = {
+  // ---- STATE：5 条派生 + 3 条自由色 ----
+  conflictBase: 'danger',
+  conflictAlpha: 0.30,
+  conflictLineBase: 'self',
+  conflictLineAlpha: 0.9,
+  ghostOkBase: 'interactionOk',
+  ghostOkAlpha: 0.40,
+  ghostBadBase: 'danger',
+  ghostBadAlpha: 0.30,
+  ghostBadLineBase: 'danger',
+  ghostBadLineAlpha: 0.88,
+  dragOriginBase: 'interactionOk',
+  dragOriginAlpha: 0.14,
+  maskBase: 'self',
+  maskAlpha: 0.90,
+  planeDimBase: 'self',
+  planeDimAlpha: 0.55,
+
+  // ---- PLANE_ART：2 条派生，写公式不写死结果 ----
+  shadowBase: 'self',
+  shadowAlpha: 0.55,
+  keylineBase: 'self',
+  keylineAlpha: 0.42,
+  glowBase: 'self',
+  glowAlpha: 0.30,
+  keelTailBase: 'glow',
+  keelTailFactor: 0.07,       // α = 0.30 × 0.07 = 0.021
+  panelBase: 'self',
+  panelAlpha: 0.32,
+  lightBase: 'self',
+  lightAlpha: 0.75,
+  lightDimBase: 'light',
+  lightDimDivisor: 2,         // α = 0.75 ÷ 2 = 0.375（原写死 0.38，漂移 0.005）
+  nozzleBase: 'self',
+  nozzleAlpha: 0.50,
+
+  // ---- 皮肤 rgba：base 一律 self（RGB 随皮肤走），只把 α 单独登记 ----
+  abyss_bgGridBase: 'self',
+  abyss_bgGridAlpha: 0.10,
+  abyss_cellDotBase: 'self',
+  abyss_cellDotAlpha: 0.20,
+  abyss_missRingBase: 'self',
+  abyss_missRingAlpha: 0.72,
+  abyss_sheenBase: 'self',
+  abyss_sheenAlpha: 0.16,
+  abyss_shadeBase: 'self',
+  abyss_shadeAlpha: 0.35,
+  dusk_bgGridBase: 'self',
+  dusk_bgGridAlpha: 0.055,
+  dusk_cellDotBase: 'self',
+  dusk_cellDotAlpha: 0.20,
+  dusk_missRingBase: 'self',
+  dusk_missRingAlpha: 0.70,
+  dusk_sheenBase: 'self',
+  dusk_sheenAlpha: 0.14,
+  dusk_shadeBase: 'self',
+  dusk_shadeAlpha: 0.42,
+  mono_bgGridBase: 'self',
+  mono_bgGridAlpha: 0.05,
+  mono_cellDotBase: 'self',
+  mono_cellDotAlpha: 0.18,
+  mono_missRingBase: 'self',
+  mono_missRingAlpha: 0.72,
+  mono_sheenBase: 'self',
+  mono_sheenAlpha: 0.14,
+  mono_shadeBase: 'self',
+  mono_shadeAlpha: 0.45
+}
+
+/* ==================================================================
  * 第二层 · SEMANTIC —— 语义三色
  * ==================================================================
  *
@@ -105,8 +199,9 @@ const SEMANTIC = {
  * ⚠ `ghostBad` 与 `conflict` 同值（都是 danger @ .30），**不是撞值，是两个状态恰好同色**：
  *   一个是「已违规」，一个是「将要违规」。这正是断言四按**名字**查的理由 ——
  *   如果只按值查，删掉其中任何一个都不会被发现。
- * ⚠ G2（规格 §9.3）：其中 5 个其实是「语义色 / 主色 + alpha」的派生值，
- *   现在以字面量登记 —— `danger` 改了它们不会跟。PR-5 收成参数化派生。
+ * ⚠ G2 已收（规格 §9.3 / §9.4）：其中 5 个是派生值，关系登记在上表 ALPHA，
+ *   ghostOk / dragOrigin 的基色为冻结的 INTERACTION.ok，不再是随皮肤走的 primary。
+ *   下面的 rgba 字面量只是 checker 的逐值锚点，权威是 ALPHA 表。
  */
 const STATE = {
   // 非法布阵 / 非法落位
@@ -339,12 +434,13 @@ const PLANE_ART = {
   shadow: 'rgba(2, 8, 16, 0.55)',       // 外描边·暗（keyline 底）+ 机头前缘三角
   keyline: 'rgba(224, 236, 246, 0.42)',  // 外描边·亮；受损时混 danger（§5.8）
   glow: 'rgba(224, 236, 246, 0.30)',     // 龙骨渐变·机头端
-  // 龙骨渐变·机尾端 = glow 的 α × 0.07。不运行时算：这是常量表，
-  // 算一次和写两次效果相同，但写出来的值能被 review 到。
+  // 龙骨渐变·机尾端 = at(glow, 0.30 × 0.07) = 0.021。公式在 ALPHA.keelTailFactor，
+  // 这里保留字面量作 checker 锚点；不要手改，也不要写成 at(glow, 0.07)。
   keelTail: 'rgba(224, 236, 246, 0.021)',
   panel: 'rgba(6, 18, 30, 0.32)',        // 机翼后掠线 1px
   light: 'rgba(224, 244, 255, 0.75)',    // 翼尖灯
-  lightDim: 'rgba(224, 244, 255, 0.38)', // 尾喷口亮缝（light 的 α 减半）
+  // 尾喷口亮缝 = at(light, 0.75 ÷ 2) = 0.375；原写死 0.38 是漂移（规格 §9.4）
+  lightDim: 'rgba(224, 244, 255, 0.375)',
   nozzle: 'rgba(2, 8, 16, 0.50)'         // 尾喷口块
 }
 
@@ -380,6 +476,11 @@ module.exports = {
   // 已落地皮肤表。core/skin.js 用它给白名单兜底（id 必须真的有值表）。
   skins: SKINS,
   applySkin: applySkin,
+
+  // 顶层冻结青色源：不进 color / 不进皮肤，ghostOk 与 dragOrigin 的基色
+  interaction: INTERACTION,
+  // rgba 派生表：脚本验「底色 token + 独立 α」关系的唯一数据入口
+  alpha: ALPHA,
 
   // 派生键的指向关系（见上面 ALIASES 那段）。导出是为了让
   // scripts/check-skin-tokens.js 能验「别名指向谁、值有没有跟着走」。

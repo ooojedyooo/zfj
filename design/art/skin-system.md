@@ -172,7 +172,7 @@ assert.deepEqual(paletteOf(require('.../theme.js')), fromSpec.slice(0, half))
 |---|---|---|
 | 页面背景 | `bgTop` `bg` `bgBottom` `bgGrid` | 与 `text` ≥ 12:1 |
 | 面板 / 卡片 | `panel` `panelHi` `card` `border` `borderHi` `gray` `sheen` `shade` | 与 `textMuted` ≥ 4.5:1 |
-| 底板 | `plate` `plateShadow` | 外框/底板 ≥ 1.8:1；`plateShadow` 允许是 rgba |
+| 底板 | `plate` | 外框/底板 ≥ 1.8:1；阴影走偏移块 + `shade` 体系，不单列 `plateShadow`（已撤，见 §9.3） |
 | 格线 | `grid` | 格线/底板 **1.3~2.0:1**。高于 2.0 就变成表格，会盖过空格微点 |
 | 双轴刻度 | `axis` | 刻度/底板 **≥ 4.5:1**（A2 就是踩了这条） |
 | 空格微点 | `cellDot` | rgba，透明度 0.18~0.22 |
@@ -240,7 +240,6 @@ text #EAF2FB   textMuted #7E96AE   textFaint #5A7186
 border #1E3A52   borderHi #2A4A66   card #0F2438   gray #14293D
 
 plate #0A1B2E          ← 原 boardBg
-plateShadow rgba(0,0,0,0.30)   ← 建议值；现有 rgba(12,68,124,0.05) 几乎看不见，可选保留
 frame #2A4A66          ← 原 boardFrame
 grid  #1C3A52          ← 原 gridLine
 axis  #7E9BB4          ← 改！（原 #5A7186，3.42:1 → 5.98:1）
@@ -254,6 +253,7 @@ palette[2]  紫罗兰    body #a02ec6   head #c897d9      （L* 43.5 / 69.1）
 sweepColor #BFF3FF   sweepGlow #BFF3FF
 
 （装饰色三架共用，见 §9 的 PLANE_ART；扫掠运动学参数是全局常量，不进皮肤）
+（底板阴影走偏移块，早期稿的 `plateShadow` 已撤，见 §9.3）
 ```
 
 ### 3.3 `dusk` 暖砂沙盘（新增）
@@ -267,7 +267,7 @@ primary #A8DFFF   primaryLight #2A2318   primaryDark #D6F1FF   primaryInk #20140
 text #F7EFE3   textMuted #C4AE92   textFaint #9A8267
 border #3A2C1F   borderHi #57402C   card #241B14   gray #2A2118
 
-plate #191310   plateShadow rgba(0,0,0,0.34)
+plate #191310
 frame #8A6A45          ← 黄铜，唯一允许的暖色"结构色"
 grid #4A3A2B   axis #B39A7C   cellDot rgba(214,178,132,0.20)
 miss #6E7F8F   missRing rgba(150,168,180,0.70)
@@ -293,7 +293,7 @@ primary #FFFFFF   primaryLight #1C232A   primaryDark #FFFFFF   primaryInk #06090
 text #F4F8FB   textMuted #A9B6C2   textFaint #8695A2
 border #2C343C   borderHi #4A545E   card #151A20   gray #1A2026
 
-plate #0C1014   plateShadow rgba(0,0,0,0.45)
+plate #0C1014
 frame #5A6672   grid #2C343C   axis #93A1AE   cellDot rgba(210,222,232,0.18)
 miss #7D8B99   missRing rgba(170,185,200,0.72)
 
@@ -452,7 +452,7 @@ v1 里那条"径向衰减 f(r)：内弱外强（0.55→1.0）"在 v2 **删除**�
 | 层 | 内容 | 静态/动态 |
 |---|---|---|
 | L0 | 页面背景三段渐变 + `bgGrid` | 静态 |
-| L1 | 底板 `plateShadow` → `plate` → `frame` 描边 | 静态 |
+| L1 | 底板阴影偏移块 → `plate` → `frame` 描边 | 静态 |
 | **L2** | **雷达扫掠：核心扇段 + 8 段拖尾 + 前沿线 + 束头** | **动态** |
 | L3 | 网格线（10 横 + 10 竖 = 20 条）+ 棋盘外沿加粗框 | 静态 |
 | L4 | 空格中心微点（81 个一次 fill） | 静态 |
@@ -1049,6 +1049,97 @@ v2.2 我写过 `min(cell*0.03, 2.2px)`，**上限是错的**，而且我给的�
 ## 9. 工程 token 契约（权威，可直接抄进 theme.js）
 
 ```js
+// 顶层冻结的交互青色源（PR-5 新增，**不进皮肤**）。
+// 为什么必须单独立一个：ghostOk / dragOrigin 原先写成 `primary@α`，而 primary 是皮肤 token
+// （abyss #2BE0C8 / dusk #A8DFFF）。换肤后「这里可以落子」的青色跟着皮肤变，
+// 直接破坏 STATE 的立层理由 —— 状态画在皮肤**之上**，不由皮肤决定。
+// 值取当前 abyss 的 primary 字面量并**冻结在此**；它从此不是 primary 的别名，
+// 以后 primary 怎么改都不许动它。要改它只能改规格，不是改皮肤。
+const INTERACTION = {
+  ok: '#2BE0C8'
+}
+
+// rgba 表达规范登记（PR-5，收 G1/G2）：**一个带透明度的颜色 = 底色 token + 独立 α 参数**。
+//
+// 字段写法（脚本只认「字符串 / 数字」两种值形态，故拆成两行，不写成对象）：
+//   <key>Base       底色来源：已登记 token 名；'self' = 取该槽位 rgba 字面量自身的 RGB 三通道
+//   <key>Alpha      0..1 的 α；派生项不写结果，改写成 <key>Factor（乘）或 <key>Divisor（除）
+//
+// `at(color, alpha)` 语义是**替换** alpha，不是相乘（见 §9.4）；
+// 所以 keelTail 必须写 at(glow, 0.30 × 0.07)，写 at(glow, 0.07) 会把 α 从 0.021 抬到 0.07。
+//
+// 谁是权威：**这张表是派生关系的唯一权威**。STATE / PLANE_ART / 皮肤块里的 rgba
+// 字面量只是 checker 的逐值断言锚点（下游产物），两者不符时改字面量，不改这张表。
+const ALPHA = {
+  // ---- STATE：5 条派生 + 3 条自由色 ----
+  conflictBase: 'danger',
+  conflictAlpha: 0.30,
+  conflictLineBase: 'self',
+  conflictLineAlpha: 0.9,
+  ghostOkBase: 'interactionOk',
+  ghostOkAlpha: 0.40,
+  ghostBadBase: 'danger',
+  ghostBadAlpha: 0.30,
+  ghostBadLineBase: 'danger',
+  ghostBadLineAlpha: 0.88,
+  dragOriginBase: 'interactionOk',
+  dragOriginAlpha: 0.14,
+  maskBase: 'self',
+  maskAlpha: 0.90,
+  planeDimBase: 'self',
+  planeDimAlpha: 0.55,
+
+  // ---- PLANE_ART：2 条派生，写公式不写死结果 ----
+  shadowBase: 'self',
+  shadowAlpha: 0.55,
+  keylineBase: 'self',
+  keylineAlpha: 0.42,
+  glowBase: 'self',
+  glowAlpha: 0.30,
+  keelTailBase: 'glow',
+  keelTailFactor: 0.07,       // α = 0.30 × 0.07 = 0.021
+  panelBase: 'self',
+  panelAlpha: 0.32,
+  lightBase: 'self',
+  lightAlpha: 0.75,
+  lightDimBase: 'light',
+  lightDimDivisor: 2,         // α = 0.75 ÷ 2 = 0.375（代码原写死 0.38，漂移 0.005）
+  nozzleBase: 'self',
+  nozzleAlpha: 0.50,
+
+  // ---- 皮肤 rgba：base 一律 'self'（RGB 随皮肤走），只把 α 单独登记 ----
+  abyss_bgGridBase: 'self',
+  abyss_bgGridAlpha: 0.10,
+  abyss_cellDotBase: 'self',
+  abyss_cellDotAlpha: 0.20,
+  abyss_missRingBase: 'self',
+  abyss_missRingAlpha: 0.72,
+  abyss_sheenBase: 'self',
+  abyss_sheenAlpha: 0.16,
+  abyss_shadeBase: 'self',
+  abyss_shadeAlpha: 0.35,
+  dusk_bgGridBase: 'self',
+  dusk_bgGridAlpha: 0.055,
+  dusk_cellDotBase: 'self',
+  dusk_cellDotAlpha: 0.20,
+  dusk_missRingBase: 'self',
+  dusk_missRingAlpha: 0.70,
+  dusk_sheenBase: 'self',
+  dusk_sheenAlpha: 0.14,
+  dusk_shadeBase: 'self',
+  dusk_shadeAlpha: 0.42,
+  mono_bgGridBase: 'self',
+  mono_bgGridAlpha: 0.05,
+  mono_cellDotBase: 'self',
+  mono_cellDotAlpha: 0.18,
+  mono_missRingBase: 'self',
+  mono_missRingAlpha: 0.72,
+  mono_sheenBase: 'self',
+  mono_sheenAlpha: 0.14,
+  mono_shadeBase: 'self',
+  mono_shadeAlpha: 0.45
+}
+
 // 语义色：顶层，不在任何 skin 里。皮肤写不进这三个键 ——
 // 「皮肤吞掉语义色」在结构层面就不成立，不靠 review 保证。
 const SEMANTIC = {
@@ -1067,13 +1158,13 @@ const SEMANTIC = {
 // 只是规格从没给它们名字。**"能跑"不是"登记过"** —— 未登记的真值是
 // 「换肤时不知道要不要改它」，而答案是「根本不该改」，那就更该写下来。
 const STATE = {
-  // 非法布阵 / 非法落位
-  conflict:     'rgba(255, 90, 90, 0.30)',   // 叠两架：半透明压红
-  conflictLine: 'rgba(255, 210, 210, 0.9)',  // 叠两架的斜线（自由色，唯一的非派生值）
-  ghostOk:      'rgba(43, 224, 200, 0.40)',  // 可落位预览
-  ghostBad:     'rgba(255, 90, 90, 0.30)',   // 非法落位预览（值与 conflict 相同，**语义不同**：一个是"已违规"，一个是"将要违规"）
-  ghostBadLine: 'rgba(255, 90, 90, 0.88)',   // 非法落位的描边
-  dragOrigin:   'rgba(43, 224, 200, 0.14)',  // 拖拽起点残影
+  // 非法布阵 / 非法落位。派生关系见上方 ALPHA 表，这里的字面量是断言锚点。
+  conflict:     'rgba(255, 90, 90, 0.30)',   // = at(danger, 0.30)：叠两架，半透明压红
+  conflictLine: 'rgba(255, 210, 210, 0.9)',  // 自由色，STATE 里唯一的非派生值
+  ghostOk:      'rgba(43, 224, 200, 0.40)',  // = at(INTERACTION.ok, 0.40)：可落位预览；**不得写 primary**
+  ghostBad:     'rgba(255, 90, 90, 0.30)',   // = at(danger, 0.30)：值与 conflict 相同，**语义不同**（已违规 / 将要违规）
+  ghostBadLine: 'rgba(255, 90, 90, 0.88)',   // = at(danger, 0.88)：非法落位的描边
+  dragOrigin:   'rgba(43, 224, 200, 0.14)',  // = at(INTERACTION.ok, 0.14)：拖拽起点残影；**不得写 primary**
   // 蒙层 / 去焦点
   mask:      'rgba(3, 10, 18, 0.90)',        // 模态蒙层
   planeDim:  'rgba(7, 20, 38, 0.55)'         // 非焦点飞机：往底色压，让它退后
@@ -1110,8 +1201,10 @@ const PLANE_ART = {
   shadow:  'rgba(2,8,16,0.55)',      // 外描边·暗（keyline 底）+ 机头前缘三角，1.8px
   keyline: 'rgba(224,236,246,0.42)', // 外描边·亮，1.0px；受损时混 danger（§5.8）
   glow:    'rgba(224,236,246,0.30)', // 龙骨·中轴渐变带（机头端 α×1 → 机尾端 α×0.07）
+  keelTail:'rgba(224,236,246,0.021)',// = at(glow, 0.30 × 0.07)；公式在 ALPHA 表，勿手改此字面量
   panel:   'rgba(6,18,30,0.32)',     // 机翼后掠线，线宽 max(1, 0.025C)
-  light:   'rgba(224,244,255,0.75)', // 翼尖灯；尾喷口亮缝取 α 减半
+  light:   'rgba(224,244,255,0.75)', // 翼尖灯
+  lightDim:'rgba(224,244,255,0.375)',// = at(light, 0.75 ÷ 2)；代码原写死 0.38（漂移 0.005），PR-5 改 0.375
   nozzle:  'rgba(2,8,16,0.50)'       // 尾喷口
 }
 
@@ -1134,7 +1227,7 @@ const SKINS = {
     bgTop: '#0B2038', bg: '#071426', bgBottom: '#040D18',
     bgGrid: 'rgba(70,140,190,0.10)',
     // ---- board ----
-    plate: '#0A1B2E', plateShadow: 'rgba(0,0,0,0.30)',
+    plate: '#0A1B2E',
     frame: '#2A4A66', grid: '#1C3A52', axis: '#7E9BB4',
     cellDot: 'rgba(92,156,206,0.20)',
     miss: '#4C7093', missRing: 'rgba(84,124,164,0.72)',
@@ -1157,7 +1250,7 @@ const SKINS = {
   dusk: {
     bgTop: '#2A2018', bg: '#1B1510', bgBottom: '#100C09',
     bgGrid: 'rgba(200,170,130,0.055)',
-    plate: '#191310', plateShadow: 'rgba(0,0,0,0.34)',
+    plate: '#191310',
     frame: '#8A6A45', grid: '#4A3A2B', axis: '#B39A7C',
     cellDot: 'rgba(214,178,132,0.20)',
     miss: '#6E7F8F', missRing: 'rgba(150,168,180,0.70)',
@@ -1177,7 +1270,7 @@ const SKINS = {
   mono: {
     bgTop: '#151A1F', bg: '#080A0D', bgBottom: '#030405',
     bgGrid: 'rgba(255,255,255,0.05)',
-    plate: '#0C1014', plateShadow: 'rgba(0,0,0,0.45)',
+    plate: '#0C1014',
     frame: '#5A6672', grid: '#2C343C', axis: '#93A1AE',
     cellDot: 'rgba(210,222,232,0.18)',
     miss: '#7D8B99', missRing: 'rgba(170,185,200,0.72)',
@@ -1211,6 +1304,8 @@ module.exports = {
   // 合并顺序就是权限顺序：皮肤 → 占位色 → 状态色 → 语义色。
   // 后三层都排在皮肤之后，皮肤改不动它们；语义色仍排最后，所以谁也抢不走 danger/hit。
   color: Object.assign({}, SKINS[skin], PLACEHOLDER, STATE, SEMANTIC),
+  interaction: INTERACTION, // 顶层冻结青色源：不进 color / 不进皮肤，ghostOk 与 dragOrigin 的基色
+  alpha: ALPHA,             // rgba 派生表：脚本验「底色 token + 独立 α」关系的唯一数据入口
   aliases: ALIASES,
   sweep: SWEEP,          // 运动学：全局，皮肤改不动
   planeArt: PLANE_ART,   // 装饰：全局，三架共用
@@ -1269,16 +1364,56 @@ module.exports = {
 
 ---
 
-### 9.3 已知缺口（带编号，不是"暂保留"）
+### 9.3 已知缺口（编号留档；已收的不擦坑）
 
-**「已知缺口」和「暂保留」的区别**：前三者有编号、有归属、写清为什么现在不做；后者是一张无限期许可证 —— `planeOffHead` 就是上一张许可证放出来的东西，它在"暂保留"里躺了三个版本，最后靠撞值蒙过了检查。
+**「已知缺口」和「暂保留」的区别**：有编号、有归属、写清为什么现在不做、后来怎么收的，叫缺口；后者是一张无限期许可证 —— `planeOffHead` 就是上一张许可证放出来的东西，它在"暂保留"里躺了三个版本，最后靠撞值蒙过了检查。**已收的缺口也不删行**：把「当时错在哪、现在按什么口径收」留下，下一个人就不会第二次踩。
 
-| 编号 | 缺口 | 现在怎么处理 | 什么时候收 |
+| 编号 | 原缺口（历史口径） | 状态 | 收口依据 / 现在的权威口径 |
 |---|---|---|---|
-| **G1** | **rgba 从未参与逐值比对。** `theme.js` 有 22 个 rgba 字面量槽位，断言一一个都没查；实测其中 12 个在本规格里查不到 | 脚本每行打印「48 个 hex 槽位参与逐值比对；另有 22 个 rgba 未参与」，**把盲区写进输出**，不假装验过 | **PR-5**。收法：规格把 rgba 改写成「色 + alpha」两段（`sweepColor` + `edge: 0.20`，而不是 `rgba(191,243,255,0.20)`）；`planeArt.keelTail` / `lightDim` 是算出来的派生值，要写公式而不是写值。**现在硬纳会误报**，误报比不报更坏 —— 它会诱人把检查改松 |
-| **G2** | `STATE` 里有 5 个是「语义色 / 主色 + alpha」的派生值（`conflict`=`danger@.30`、`ghostBadLine`=`danger@.88`、`ghostOk`=`primary@.40`、`dragOrigin`=`primary@.14`，`ghostBad` 同 `conflict`），现在以**字面量**登记 | 字面量登记，逐值比对能过 | **PR-5**，与 G1 同一批收：需要 `at(color, alpha)` 这种参数化派生，且要改 5 处调用点的表达方式。收益真实（`danger` 改了它们会不跟）但不紧急，而"先登记字面量"至少让它们从**未登记**变成**已登记** |
+| **G1** | rgba 从未参与逐值比对。原文写「`theme.js` 有 22 个 rgba 字面量槽位，其中 12 个在本规格里查不到」—— **原数已失效，勿照抄** | **已收（PR-5）** | 当前及全部 10 个改过 theme.js 的历史提交都复现不出 22/12（历次值 26/21/13/11/9/9/6/6/4/1/1）。**当前权威口径：26 处 rgba 字面量 / 25 个去重值 / 值级 2 个 OUT（`keelTail`、`lightDim`）/ 键级 0 个 OUT**（`grid←bgGrid` 的改名已被脚本覆盖）。收法：§9 新增 `ALPHA` 派生表，rgba 一律写成「底色 token + 独立 α」，两条派生写公式；字面量继续逐值比对，关系由 `ALPHA` 表机验，见 §9.4 |
+| **G2** | `STATE` 里 5 个派生值（`conflict`=`danger@.30`、`ghostBadLine`=`danger@.88`、`ghostOk`=`primary@.40`、`dragOrigin`=`primary@.14`、`ghostBad` 同 `conflict`）以**字面量**登记。更严重的是后两个源写成 `primary`（皮肤 token：abyss #2BE0C8 / dusk #A8DFFF）——换肤后状态色跟着变，直接破 STATE「画在皮肤之上、不可换肤」的立层理由 | **已收（PR-5）** | `conflict` / `ghostBad` / `ghostBadLine` 源 `danger`（SEMANTIC，安全）；`ghostOk` / `dragOrigin` 改指顶层冻结 `INTERACTION.ok = #2BE0C8`，**不再引用 primary，也不作为 primary 的别名**。5 条派生全部登记进 `ALPHA` 表，绘制处用 `at(base, α)` 表达 |
 
+> **G1 为什么把错数留着**：22/12 不是"近似值"，是在任何一版代码里都查不到的数。它当初按"声明的槽位"数，而该数的是"导出的字面量" —— 两种口径差一个数量级。原数不删、标失效，是为了让人看见**"数错了"本身曾经是个缺口**；下一轮复核从此处读起，别拿旧数对账。
+>
+> **G2 为什么把 `primary` 写进历史**：这是本次唯一的**真实视觉 bug**，不是账面问题。字面量登记时它逐值能过、逐键也能过，只有产生它的那条关系（`primary` 是皮肤 token）错了。只查"值在不在规格里"永远抓不到这一类 —— 必须把派生关系本身写成数据（`ALPHA` 表）才可机验。
+>
 > **原本还有 G3（`disabled` 名字与语义不符，建议改名 `cellSpent`），已撤。** 复核发现它 0 处绘制引用 —— 它不是"名字错"，是"不存在"。名不副实的前提是它得存在。这条撤掉本身是个提醒：**缺口清单也会写错，写的时候要标清依据是「声明」还是「绘制」。**
+>
+> **同期撤掉的还有 `plateShadow`。** 三套皮肤原本都登记了（abyss 0.30 / dusk 0.34 / mono 0.45），但代码 **0 个键、0 处绘制引用** —— 底板阴影实际由 `board.js` 的偏移块（内联 `rgba(12,68,124,0.05)`）承担，面板投影由 `shade` 承担。它不是"值没对齐"，是**早期设计稿冗余**：按 A 案从 §9 契约与 §3 展示块一并撤掉。教训与 G3 同：**先问"画不画"，再问"值对不对"**。
+
+---
+
+### 9.4 rgba 表达规范（PR-5 收口后生效，工程与脚本共同遵守）
+
+**一段式 rgba 字面量不再是权威，只是 checker 的逐值断言锚点。** 权威表达一律拆两段：
+
+1. **底色 token**（`Base`）：已登记的 hex token / 顶层冻结常量；皮肤 rgba 的 RGB 随皮肤走，记作 `self`（取本槽位字面量的 RGB 三通道）。
+2. **独立 α 参数**（`Alpha`）：0..1 的数字，单独登记在 §9 的 `ALPHA` 表；派生项写 `Factor`（乘）或 `Divisor`（除），**不写结果值**。
+
+**函数签名与语义**（实现就是已有的 `draw.alpha(color, a)`，见 `draw.js`；规范名 `at`）：
+
+```js
+/**
+ * @param {string} color  已登记 token（'#rrggbb' 或 'rgba(...)'，后者取其三通道）
+ * @param {number} alpha  0..1；表中直接写的数字，或由 Factor / Divisor 算出
+ * @returns {string} 'rgba(r, g, b, alpha)'
+ * 语义：**替换** alpha，不是相乘。解析失败原样返回（渲染路径不抛异常）。
+ */
+at(color, alpha)
+```
+
+**为什么必须是"替换"**：`draw.alpha` 已是替换语义，`at()` 若改成相乘，所有 α 会被二次缩放。最危险的是龙骨尾端：`keelTail = at(glow, 0.30 × 0.07)`，写成 `at(glow, 0.07)` 会把 α 从 **0.021 抬到 0.07（3.3 倍）**，机尾渐变带会亮成一整条 —— 颜色值对了、图错了，逐值检查还难发现。
+
+**两条派生公式（写公式，不写死值）**：
+
+| token | 公式 | 结果 α | 备注 |
+|---|---|---|---|
+| `keelTail` | `at(glow, α(glow) × 0.07)` = `at(glow, 0.30 × 0.07)` | 0.021 | 与代码现值一致；`ALPHA.keelTailFactor = 0.07` |
+| `lightDim` | `at(light, α(light) ÷ 2)` = `at(light, 0.75 ÷ 2)` | 0.375 | 代码原写死 0.38，漂移 0.005；PR-5 改 0.375 |
+
+**`ALPHA` 表如何被机验**：每条记录拆成脚本已认的两种值形态（字符串 / 数字），不必扩解析器。对每条 `<key>` 验三件事：① `Base` 指向的 token 在契约里存在；② `at(Base, α)` 的结果等于该槽位在契约里的 rgba 字面量；③ `theme.js` 导出值等于字面量。`Base` 名解析：`danger` 等 → `color.*`；`glow` / `light` → `planeArt.*`；`interactionOk` → `interaction.ok`；`self` → 本槽位字面量的 RGB。
+
+**皮肤 rgba 怎么登记**：不并入 hex token 表 —— 现有 hex 正则吃不到 rgba，硬并进去会被 `declaredNames` 当成「未解析的键」红掉；也不在正文另立第二套值。做法是皮肤块保留 rgba 字面量作断言锚点，`ALPHA` 表用 `<皮肤>_<键>Base/Alpha` 逐条登记 α（base 恒为 `self`）。新增 rgba 时两处都要写，缺一处脚本红。
 
 ---
 

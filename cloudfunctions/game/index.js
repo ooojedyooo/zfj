@@ -163,7 +163,7 @@ function makeInitialBattle(players, firstOpenid, deploys, stepSeconds) {
     streak,                     // 连续超时次数
     stats,                      // stats[A] = { kill: 击毁对方架数, lost: 被击毁架数, shots: 出手次数 }
     counts,                     // counts[A] = A 本局放了几架（双方可能不同）
-    stepSeconds: step,          // 本局每步限时（房主建房时定的，5~30s）
+    stepSeconds: step,          // 本局每步限时（房主建房时定的，5~120s）
     finished: false,
     winner: '',
     endType: '',

@@ -85,7 +85,7 @@ class Battle extends Scene {
     const match = app.globalData.match || {}
     this.roomId = match.roomId || ''
     this.planeCount = this.planeCount || match.planeCount || 1
-    // 本局每步限时由房主在创建房间时定（5~30 秒），不是全局常量
+    // 本局每步限时由房主在创建房间时定（5~120 秒），不是全局常量
     this.stepSeconds = match.stepSeconds || TIMEOUT.TURN
     this.turnSeconds = this.stepSeconds
     this.myStreak = 0

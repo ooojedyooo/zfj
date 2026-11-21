@@ -27,7 +27,7 @@ class Room extends Scene {
     this.password = String(Math.floor(1000 + Math.random() * 9000))
     this.usePassword = false        // 默认不设密码 = 公开房间（房名可被搜到）
     this.planeCount = MAX_PLANES    // 本局打几架 —— 房主在这里定死，布阵必须摆满
-    this.stepSeconds = TURN_DEFAULT // 每步限时，房主用滑块在 5~30 之间调
+    this.stepSeconds = TURN_DEFAULT // 每步限时，房主用滑块在 5~120 之间调
     this.matchPlanes = MIN_PLANES    // 「随机匹配」要匹配几架的房间
     this._dragSlider = false
     this.joinRoomNo = ''
@@ -221,7 +221,7 @@ class Room extends Scene {
           this.zone(rect.x, rect.y, rect.w, rect.h, this.onPickPlanes.bind(this, n))
         }
 
-        // ③ 每步限时：滑块，5~30 秒 1 秒连续。
+        // ③ 每步限时：滑块，5~120 秒 1 秒连续。
         //    不注册 zone —— 滑块是拖动控件，注册了 tap 就会「按下去跳一次、松手又跳一次」，
         //    两次算出来的值未必一样，表现为数值自己乱跳。
         const knobR = u(Slider.KNOB_R)

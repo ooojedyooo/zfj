@@ -52,7 +52,7 @@ function listItem(room) {
     roomName: room.roomName || '未命名房间',
     // 架数必须给：玩家在列表上就要知道这一局打多大，不然点进去才发现不是想要的
     planeCount: clampPlaneCount(room.planeCount),
-    stepSeconds: room.stepSeconds || 30,
+    stepSeconds: room.stepSeconds || 60,
     hasPassword: !!room.hasPassword,
     players: (room.players || []).length,
     createdAt: room.createdAt || 0
@@ -92,7 +92,7 @@ async function createRoom(event, openid) {
     data: {
       roomNo,
       roomName,
-      stepSeconds,                            // 本局每步限时（5~30s，T-05 修订）
+      stepSeconds,                            // 本局每步限时（5~120s，T-05 修订）
       hasPassword,                            // 只告诉客户端「有没有密码」，不给密码本身
       isPublic: !hasPassword,
       planeCount,

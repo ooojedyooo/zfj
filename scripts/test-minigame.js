@@ -254,7 +254,7 @@ async function main() {
   const sRight = slider.x + slider.w - app.u(24) - 1
   app.touchStart(sRight, sCy)
   app.touchEnd(sRight, sCy)
-  check('拖到最右 = 30 秒', function () { assert.strictEqual(room.stepSeconds, TURN_MAX) })
+  check('拖到最右 = 上限 120 秒', function () { assert.strictEqual(room.stepSeconds, TURN_MAX) })
 
   app.touchStart(sLeft, sCy)
   app.touchEnd(sLeft, sCy)
@@ -1319,11 +1319,11 @@ async function main() {
     assert.ok(cr.roomName && cr.roomName.length > 0, '房间名为空')
     assert.ok(cr.roomName.length <= 12, '房间名过长：' + cr.roomName)
   })
-  check('每步限时默认 20 秒（范围内）', function () {
+  check('每步限时默认 60 秒（范围内）', function () {
     assert.strictEqual(cr.stepSeconds, TURN_DEFAULT)
     assert.ok(cr.stepSeconds >= TURN_MIN && cr.stepSeconds <= TURN_MAX)
   })
-  check('滑块把限时夹在 5~30 秒之间（拖到两端越界也不飘）', function () {
+  check('滑块把限时夹在 5~120 秒之间（拖到两端越界也不飘）', function () {
     const r = cr.geo.stepSlider
     const cy = r.y + r.h / 2
     app.touchStart(r.x + 2, cy)
@@ -1333,7 +1333,7 @@ async function main() {
     app.touchEnd(r.x + r.w - 2, cy)
     assert.strictEqual(cr.stepSeconds, TURN_MAX, '右端失效：' + cr.stepSeconds)
   })
-  check('滑块 1 秒连续：拖到中间能取到 5 与 30 之间的任意整数', function () {
+  check('滑块 1 秒连续：拖到中间能取到 5 与 120 之间的任意整数', function () {
     const r = cr.geo.stepSlider
     const cy = r.y + r.h / 2
     const left = r.x + app.u(24)
@@ -1378,7 +1378,7 @@ async function main() {
       assert.ok(/^\d{6}$/.test(it.roomNo), '房间号不合法：' + it.roomNo)
       assert.ok(it.roomName && it.roomName.length > 0, '缺少房名')
       assert.ok(it.planeCount >= 1 && it.planeCount <= 3, '架数不合法：' + it.planeCount)
-      assert.ok(it.stepSeconds >= 5 && it.stepSeconds <= 30, '单步限时不合法：' + it.stepSeconds)
+      assert.ok(it.stepSeconds >= TURN_MIN && it.stepSeconds <= TURN_MAX, '单步限时不合法：' + it.stepSeconds)
     })
   })
   check('公开列表里只有公开房', function () {
@@ -1465,7 +1465,7 @@ async function main() {
     planes: [{ planeId: 'standard', anchorRow: 5, anchorCol: 5, rotation: 0 }]
   })
   const ig = offline._getGame()
-  check('回合截止时间按房间设定的 5 秒算，而不是默认 30 秒', function () {
+  check('回合截止时间按房间设定的 5 秒算，而不是默认 60 秒', function () {
     const left = ig.turnDeadline - t0
     assert.ok(left <= 5200, '截止时间偏晚：' + left + 'ms')
     assert.ok(left > 1000, '截止时间不对：' + left + 'ms')
@@ -1537,14 +1537,14 @@ async function main() {
   /* ---------- 12. 房间规则纯函数 ---------- */
   section('[12] 房间规则取值（纯函数）')
 
-  check('单步限时夹在 5~30 秒，非法值回落默认', function () {
-    assert.strictEqual(ROOMUTIL.clampStepSeconds(3), 5)
-    assert.strictEqual(ROOMUTIL.clampStepSeconds(99), 30)
+  check('单步限时夹在 5~120 秒，非法值回落默认', function () {
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(3), TURN_MIN)
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(999), TURN_MAX)
     // 1 秒连续：17 就是 17，不再对齐到 5 的倍数
     assert.strictEqual(ROOMUTIL.clampStepSeconds(17), 17)
     assert.strictEqual(ROOMUTIL.clampStepSeconds(17.6), 18)
     assert.strictEqual(ROOMUTIL.clampStepSeconds(5), 5)
-    assert.strictEqual(ROOMUTIL.clampStepSeconds(30), 30)
+    assert.strictEqual(ROOMUTIL.clampStepSeconds(TURN_MAX), TURN_MAX)
     assert.strictEqual(ROOMUTIL.clampStepSeconds(''), RULES.TURN_DEFAULT)
     assert.strictEqual(ROOMUTIL.clampStepSeconds(undefined), RULES.TURN_DEFAULT)
     assert.strictEqual(ROOMUTIL.clampStepSeconds(NaN), RULES.TURN_DEFAULT)

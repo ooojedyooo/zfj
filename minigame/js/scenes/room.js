@@ -18,6 +18,14 @@ const {
 const { clampPlaneCount } = require('../shared/utils/room')
 const { AUDIO } = require('../core/audio')
 
+// 云函数 join 明确回这几类「这间房已经进不去了」的错误（cloudfunctions/room/index.js）
+// 时，除了 toast 还要给一条出路：动作区切成「去快速匹配」，别让玩家卡在加入页。
+const JOIN_DEGRADED_TEXT = {
+  NOT_FOUND: '房间不存在或已过期',
+  STARTED: '这间房已经开局了',
+  FULL: '房间已满'
+}
+
 class Room extends Scene {
   constructor(app) {
     super(app)
@@ -33,6 +41,8 @@ class Room extends Scene {
     this._dragSlider = false
     this.joinRoomNo = ''
     this.joinPassword = ''
+    // 加入失败后的兜底文案（过期 / 已开局 / 满员）：非空时动作区切成「去快速匹配」
+    this.joinError = ''
     this.playerCount = 0
     this.waitLeft = TIMEOUT.ROOM
     this.loading = false
@@ -50,6 +60,11 @@ class Room extends Scene {
     this.stopWatch()
     this.stopCountdown()
 
+    // 房间内点右上角「···」转发也带房间号：全局那条 onShare 的 query 是空的，
+    // 这里按场景覆盖注册（share.onShare 以最后一次注册为准）。
+    // 无需反注册——离开房间后下一个场景会重新注册自己的被动分享。
+    share.onShare(() => this.shareInfo())
+
     this.enteredGame = false
     this.loading = false
     this.rivalName = p.rival || ''
@@ -57,6 +72,7 @@ class Room extends Scene {
     this.waitLeft = TIMEOUT.ROOM
     this.playerCount = 0
     this._dragSlider = false
+    this.joinError = ''
 
     // 房间名默认取昵称；架数与单步限时回到默认值 —— 每次开新房间都是一张干净的设置
     this.roomName = profile.nickname()
@@ -76,12 +92,16 @@ class Room extends Scene {
 
     // 来自好友分享卡片：自动切到「加入房间」并回填房间号 / 密码
     const q = share.launchQuery()
+    const fromLaunch = !p.roomNo && !!q.roomNo
     const qNo = p.roomNo || q.roomNo || ''
     const qPwd = p.pwd || q.pwd || ''
     if (qNo) {
       this.mode = 'join'
       this.joinRoomNo = qNo
       this.joinPassword = qPwd
+      // 邀请参数读完即清：小游戏 query 是全局的，留着会让下次切前台或再次进房间
+      // 被陈旧的房间号反复拉进 join 流程（onShow 另有 isConsumed 幂等守卫）
+      if (fromLaunch) share.consumeInvite()
     } else {
       this.mode = p.mode || 'create'
     }
@@ -96,9 +116,11 @@ class Room extends Scene {
       self.layout()
     })
 
-    // 自动动作：创建房间 / 发起匹配。两者都是「点了就走」，不要再让人确认一次。
+    // 自动动作：创建房间 / 加入房间 / 发起匹配。都是「点了就走」，不再让人确认一次。
+    // join 必须显式分支——只给原来的 onCreate 加参数会把「好友点卡进房」当成建房。
     if (p.auto) {
       if (this.mode === 'random') this.onMatch()
+      else if (this.mode === 'join') this.onJoin()
       else this.onCreate()
     }
   }
@@ -250,7 +272,9 @@ class Room extends Scene {
 
       const actionY = L.H - L.safeBottom - u(24) - btnH
       g.actionBtn = { x: x, y: actionY, w: w, h: btnH }
-      const act = this.mode === 'join' ? this.onJoin
+      // 加入扑空（过期/已开局/满员）时动作区换成「去快速匹配」，好友不会卡死在加入页
+      const act = this.joinError ? this.onQuickMatchFromJoin
+        : this.mode === 'join' ? this.onJoin
         : this.mode === 'random' ? this.onMatch : this.onCreate
       this.zone(x, actionY, w, btnH, act.bind(this))
     }
@@ -327,9 +351,13 @@ class Room extends Scene {
     if (this.mode === 'join') {
       this.drawField(ctx, card.x + u(28), g.row1.y, card.w - u(56), '房间号', this.joinRoomNo || '点击输入 6 位房间号', !this.joinRoomNo)
       this.drawField(ctx, card.x + u(28), g.row2.y, card.w - u(56), '密码（如无请留空）', this.joinPassword || '点击输入', !this.joinPassword)
-      draw.text(ctx, '从好友分享卡片点进来会自动回填', card.x + u(28), card.y + card.h - u(26), {
-        size: u(theme.size.tiny), color: c.textMuted
-      })
+      const joinHint = this.joinError
+        ? this.joinError + ' · 点下方去快速匹配'
+        : '从好友分享卡片点进来会自动回填'
+      draw.text(ctx, draw.ellipsis(ctx, joinHint, card.w - u(56), u(theme.size.tiny)),
+        card.x + u(28), card.y + card.h - u(26), {
+          size: u(theme.size.tiny), color: this.joinError ? c.danger : c.textMuted
+        })
     } else {
       if (this.mode === 'create') {
         const lx = card.x + u(28)
@@ -418,7 +446,9 @@ class Room extends Scene {
       }
     }
 
-    const label = this.mode === 'join' ? '加入房间' : (this.mode === 'random' ? '开始匹配' : '创建房间')
+    const label = this.joinError ? '去快速匹配'
+      : this.mode === 'join' ? '加入房间'
+      : (this.mode === 'random' ? '开始匹配' : '创建房间')
     Button.render(ctx, Object.assign({}, g.actionBtn, {
       label: label, kind: 'primary', loading: this.loading
     }), u)
@@ -514,7 +544,7 @@ class Room extends Scene {
       title: '输入 6 位房间号',
       value: this.joinRoomNo,
       placeholder: '例如 123456',
-      onOk: function (v) { this.joinRoomNo = v; this.layout() }.bind(this)
+      onOk: function (v) { this.joinRoomNo = v; this.joinError = ''; this.layout() }.bind(this)
     })
   }
 
@@ -523,7 +553,7 @@ class Room extends Scene {
       title: '输入房间密码',
       value: this.joinPassword,
       placeholder: '如无密码请留空',
-      onOk: function (v) { this.joinPassword = v; this.layout() }.bind(this)
+      onOk: function (v) { this.joinPassword = v; this.joinError = ''; this.layout() }.bind(this)
     })
   }
 
@@ -570,9 +600,21 @@ class Room extends Scene {
     }).catch(function (e) {
       app.hideBusy()
       self.loading = false
-      app.toast(e.message || '加入失败')
+      // code 由 cloudImpl 从云函数结果透传；离线引擎没有 code，走普通 toast 不降级
+      const code = e && e.code
+      self.joinError = JOIN_DEGRADED_TEXT[code]
+        ? JOIN_DEGRADED_TEXT[code] + '，可快速匹配另开一局'
+        : ''
+      app.toast((e && e.message) || '加入失败')
       self.layout()
     })
+  }
+
+  /** 加入扑空后的出路：按原本想打的架数直接发起快速匹配 */
+  onQuickMatchFromJoin() {
+    const planes = this.matchPlanes
+    this.joinError = ''
+    this.app.replace('room', { mode: 'random', auto: true, planeCount: planes })
   }
 
   onMatch() {
@@ -600,12 +642,19 @@ class Room extends Scene {
     //   ① 在别的场景上重建 layout；② 重新打开 watch；③ 对手一进来就把人拽到布阵页。
     // 所以先确认「我还在前台」。
     if (app.scene !== this) return
+    // 密码只在自己确实知道时才往全局带：房主用 this.password，加入者用刚输入的那个；
+    // 从公开列表加入的场景拿不到密码就留空——battle/result 被动分享不硬造 pwd。
+    const knownPwd = data.hasPassword
+      ? (this.mode === 'create' && this.usePassword ? this.password
+        : this.mode === 'join' ? this.joinPassword : '')
+      : ''
     app.globalData.match = {
       roomId: data.roomId,
       roomNo: data.roomNo,
       roomName: data.roomName || '',
       stepSeconds: data.stepSeconds || TURN_DEFAULT,
-      planeCount: data.planeCount
+      planeCount: data.planeCount,
+      pwd: knownPwd
     }
     this.roomId = data.roomId
     this.roomNo = data.roomNo
@@ -692,12 +741,12 @@ class Room extends Scene {
 
   shareInfo() {
     if (this.roomNo) {
-      const q = this.usePassword ? { roomNo: this.roomNo, pwd: this.password } : { roomNo: this.roomNo }
       return {
         title: this.rivalName
           ? '炸飞机 · ' + this.rivalName + '，房间 ' + this.roomNo + '，接着上次的账继续算！'
           : '炸飞机 · 房间号 ' + this.roomNo + '，来跟我打一局！',
-        query: share.toQuery(q)
+        // 全场景统一走 share.roomQuery：只带 roomNo + 可选 pwd（T-08）
+        query: share.roomQuery(this.roomNo, this.usePassword ? this.password : '')
       }
     }
     return { title: '炸飞机 · 9×9 双人实时对战，机头一炮击毁', query: '' }

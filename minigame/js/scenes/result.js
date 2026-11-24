@@ -47,10 +47,13 @@ class Result extends Scene {
     this.rivalName = rivals.displayName(list[0])
     this.rivalCount = list.length
 
+    // 结算页被动转发同样带房间号（从全局 match 取，与 battle 同源）；
+    // 对局结束房间可能已关闭，好友点开走「加入失败 → 去快速匹配」兜底。
+    const m = this.app.globalData.match || {}
     share.onShare(function () {
       return {
         title: '炸飞机 · 9×9 双人实时对战，来跟我打一局',
-        query: ''
+        query: share.roomQuery(m.roomNo, m.pwd)
       }
     })
     this.layout()

@@ -22,6 +22,15 @@ const STORE = _stub.STORE
 // 弹窗桩：记下最后一次弹窗的参数，让「拦住了没有、说了什么」可以断言
 const MODAL = _stub.MODAL
 
+// 社交 MVP 测试探针：桩本体保持通用，这里只在测试侧覆盖两个 wx 回调，
+// 记录「被动分享注册」与「onShow 回调」，供邀请卡 query / 热启动自动进房断言。
+// 注意必须在 require('../minigame/game') 之前装好。
+const SHARE = { handlers: [], active: null, last: null }
+const SHOWS = []
+global.wx.onShareAppMessage = function (fn) { SHARE.active = fn; SHARE.handlers.push(fn) }
+global.wx.shareAppMessage = function (info) { SHARE.last = info }
+global.wx.onShow = function (fn) { SHOWS.push(fn) }
+
 /* ================= 加载被测对象 ================= */
 
 const app = require('../minigame/game')
@@ -2708,6 +2717,212 @@ async function main() {
   })
 
   app.audio = realAudio
+
+  /* ---------- 17. 社交 MVP：邀请卡 / 自动进房 / 表情 ---------- */
+  section('[17] 社交 MVP · 邀请卡 / 自动进房 / 表情链')
+
+  const share = require('../minigame/js/core/share')
+  const { EMOTES, EMOTE_HIDE_MS } = require('../minigame/js/shared/config/social')
+
+  // -- 17a. 房间场景被动分享带房间号（T-08：只带房间号 + 可选密码） --
+  app.reset('lobby')
+  const lobbyShare = SHARE.active()
+  check('大厅被动分享 query 为空（大厅无房间上下文）', function () {
+    assert.ok(lobbyShare && lobbyShare.query === '')
+  })
+  app.go('room', { mode: 'create' })
+  const roomS = app.scene
+  roomS.roomNo = '123456'
+  roomS.usePassword = false
+  check('房间场景被动 onShare 的 query 含 roomNo', function () {
+    const info = SHARE.active()
+    assert.ok(info && info.query.indexOf('roomNo=123456') >= 0,
+      '实际被动分享：' + JSON.stringify(info))
+  })
+  check('公开房邀请卡不带 pwd，也不带任何棋盘/布阵信息（T-08）', function () {
+    const q = SHARE.active().query
+    assert.ok(q.indexOf('pwd=') < 0, '公开房不应带 pwd：' + q)
+    assert.ok(!/anchor|cell|plane|head|mark|board/i.test(q), '邀请卡泄漏棋盘信息：' + q)
+  })
+  roomS.usePassword = true
+  roomS.password = '4321'
+  check('密码房被动分享 query 同时带 roomNo 与 pwd', function () {
+    const q = SHARE.active().query
+    assert.ok(q.indexOf('roomNo=123456') >= 0 && q.indexOf('pwd=4321') >= 0, '实际：' + q)
+  })
+  roomS.onInvite()
+  check('主动邀请与被动转发共用同一份 shareInfo', function () {
+    assert.strictEqual(SHARE.last.query, SHARE.active().query)
+  })
+
+  // -- 17b. join + auto 必须走 onJoin，绝不能落进 onCreate --
+  const acalls = []
+  const savedJoin = roomS.onJoin
+  const savedCreate = roomS.onCreate
+  const savedMatch = roomS.onMatch
+  roomS.onJoin = function () { acalls.push('join') }
+  roomS.onCreate = function () { acalls.push('create') }
+  roomS.onMatch = function () { acalls.push('match') }
+  roomS.onEnter({ mode: 'join', auto: true, roomNo: '654321' })
+  const joinCalls = acalls.slice()
+  acalls.length = 0
+  roomS.onEnter({ mode: 'create', auto: true })
+  const createCalls = acalls.slice()
+  acalls.length = 0
+  roomS.onEnter({ mode: 'random', auto: true })
+  const matchCalls = acalls.slice()
+  roomS.onJoin = savedJoin
+  roomS.onCreate = savedCreate
+  roomS.onMatch = savedMatch
+  check('mode:join + auto:true 触发 onJoin 而非 onCreate', function () {
+    assert.deepStrictEqual(joinCalls, ['join'], '实际调用：' + JSON.stringify(joinCalls))
+  })
+  check('join + auto 正确回填房间号', function () {
+    assert.strictEqual(roomS.joinRoomNo, '654321')
+  })
+  check('原有 create/random 的 auto 分支未回退', function () {
+    assert.deepStrictEqual(createCalls, ['create'])
+    assert.deepStrictEqual(matchCalls, ['match'])
+  })
+
+  // -- 17c. onShow 空 query 不冲掉已有 roomNo；邀请用后按需清理 --
+  const savedLaunchQ = Object.assign({}, share.launchQuery())
+  share.setLaunchQuery({ roomNo: '111111', pwd: '2222' })
+  share.setLaunchQuery({})
+  share.setLaunchQuery(null)
+  check('普通切前台（query 为空）不冲掉已有 roomNo/pwd', function () {
+    const q = share.launchQuery()
+    assert.strictEqual(q.roomNo, '111111')
+    assert.strictEqual(q.pwd, '2222')
+  })
+  share.setLaunchQuery({ roomNo: '333333' })
+  check('新邀请卡（带 roomNo）整份替换旧 query', function () {
+    assert.strictEqual(share.launchQuery().roomNo, '333333')
+  })
+  check('share 提供 consumeInvite 清理入口，且清后无残留 roomNo', function () {
+    assert.strictEqual(typeof share.consumeInvite, 'function', '缺少 consumeInvite')
+    share.consumeInvite()
+    assert.ok(!share.launchQuery().roomNo, '消费后仍残留 roomNo')
+  })
+  check('同一张邀请卡已消费后不会被 onShow 重复触发', function () {
+    assert.strictEqual(share.isConsumed('333333'), true)
+    assert.strictEqual(share.isConsumed('999999'), false)
+  })
+  share.setLaunchQuery(savedLaunchQ)
+
+  // -- 17d. 单机下带 roomNo 冷 / 热启动能进房（走 offlineGame，不崩） --
+  share.setLaunchQuery({ roomNo: '654321' })
+  app.reset('lobby')
+  const coldQ = share.launchQuery()
+  if (coldQ.roomNo) app.go('room', { mode: 'join', auto: true })  // 复刻 game.js 冷启动那段
+  await waitFor(function () {
+    return app.scene.name === 'deploy' ||
+      (app.scene.name === 'room' && app.scene.roomNo === '654321')
+  }, '单机冷启动带房间号进房')
+  check('单机冷启动带 roomNo 自动进房不崩', function () {
+    assert.ok(app.globalData.match && app.globalData.match.roomNo === '654321',
+      'match=' + JSON.stringify(app.globalData.match))
+  })
+  check('game.js 已注册 onShow 回调', function () { assert.ok(SHOWS.length >= 1) })
+  share.setLaunchQuery({ roomNo: '778899' })
+  SHOWS[0]({ query: { roomNo: '778899' } })      // 复刻好友点卡热启动
+  await waitFor(function () {
+    return app.scene.name === 'deploy' ||
+      (app.scene.name === 'room' && app.scene.roomNo === '778899')
+  }, '单机热启动带房间号进房')
+  check('单机热启动带 roomNo 自动进房不崩', function () {
+    assert.strictEqual(app.globalData.match.roomNo, '778899')
+  })
+
+  // -- 17e. 表情链：发送 → seq → watch 收到 → 气泡 → 自动隐藏 --
+  offline._reset()
+  await offline.matchRoom({ planeCount: 1 })
+  await offline.deploy({ planes: [{ planeId: 'standard', anchorRow: 0, anchorCol: 0, rotation: 0 }] })
+  await sleep(80)
+  let watched = null
+  const watcher = offline.watchRoom('emote-test', function (v) { watched = v })
+  const emoteRes = await cloudApi.emote({ roomId: 'emote-test', emoji: EMOTES[0].emoji })
+  await sleep(10)
+  check('表情发送后 seq 递增，另一方通过 watch 收到同一表情', function () {
+    assert.ok(emoteRes.seq >= 1)
+    assert.ok(watched && watched.battle && watched.battle.emote, 'watch 未收到 emote')
+    assert.strictEqual(watched.battle.emote.emoji, EMOTES[0].emoji)
+    assert.strictEqual(watched.battle.emote.seq, emoteRes.seq)
+  })
+
+  const battleS = app.get('battle')
+  const savedEmoteOpenid = battleS.myOpenid
+  const savedSeq = battleS.lastEmoteSeq
+  const savedBubble = battleS.emoteBubble
+  const savedTimer = battleS.emoteTimer
+  const savedLastBattle = battleS.lastBattle
+  const realSetTimeout = global.setTimeout
+  let hideFn = null
+  global.setTimeout = function (fn, ms) {
+    if (ms === EMOTE_HIDE_MS) { hideFn = fn; return 0 }
+    return realSetTimeout.apply(null, arguments)
+  }
+  try {
+    battleS.myOpenid = 'foe'    // emote.by === 'me' → 这是「对方」发的
+    battleS.lastEmoteSeq = 0
+    battleS.emoteBubble = null
+    battleS.applyBattle(watched.battle)
+    check('按 seq 收到新表情 → 显示对方气泡，且不重复', function () {
+      assert.ok(battleS.emoteBubble, '气泡未显示')
+      assert.strictEqual(battleS.emoteBubble.emoji, EMOTES[0].emoji)
+      assert.strictEqual(battleS.emoteBubble.mine, false)
+      assert.strictEqual(battleS.lastEmoteSeq, emoteRes.seq)
+    })
+    check('表情气泡渲染不抛异常', function () {
+      battleS.layout()
+      battleS.render(CTX)
+    })
+    check('气泡到 EMOTE_HIDE_MS 自动隐藏', function () {
+      assert.strictEqual(typeof hideFn, 'function', '未注册隐藏定时器')
+      hideFn()
+      assert.strictEqual(battleS.emoteBubble, null)
+      assert.strictEqual(battleS.emoteTimer, null)
+    })
+  } finally {
+    global.setTimeout = realSetTimeout
+    battleS.myOpenid = savedEmoteOpenid
+    battleS.lastEmoteSeq = savedSeq
+    battleS.emoteBubble = savedBubble
+    battleS.emoteTimer = savedTimer
+    battleS.lastBattle = savedLastBattle
+    watcher.close()
+  }
+
+  // -- 17f. 过期/满员：明确文案 + 去快速匹配兜底，不卡死在 join 页 --
+  const roomF = app.get('room')
+  const realJoin = cloudApi.joinRoom
+  const realReplace = app.replace
+  let replaced = null
+  cloudApi.joinRoom = function () {
+    const e = new Error('房间不存在')
+    e.code = 'NOT_FOUND'
+    return Promise.reject(e)
+  }
+  app.replace = function (name, params) { replaced = { name: name, params: params } }
+  try {
+    roomF.onEnter({ mode: 'join' })
+    roomF.joinRoomNo = '999999'
+    roomF.onJoin()
+    await sleep(30)
+    check('NOT_FOUND 给明确文案并把动作区切成「去快速匹配」', function () {
+      assert.ok(roomF.joinError && /快速匹配/.test(roomF.joinError),
+        '实际兜底文案：' + roomF.joinError)
+    })
+    roomF.zones[roomF.zones.length - 1].onTap()
+    check('点兜底动作进入快速匹配（不卡死在加入页）', function () {
+      assert.ok(replaced && replaced.name === 'room' && replaced.params.mode === 'random',
+        '实际跳转：' + JSON.stringify(replaced))
+    })
+  } finally {
+    cloudApi.joinRoom = realJoin
+    app.replace = realReplace
+    roomF.joinError = ''
+  }
 
   /* ---------- 收尾 ---------- */
   app.stop()

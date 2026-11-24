@@ -132,9 +132,11 @@ if (wx.onShow) {
   wx.onShow(function (res) {
     app.start()            // 已在运行则是空操作（start 自带 _running 守卫）
     audio.resume()         // 未静音时恢复；内部会重置氛围调度锚点，防后台欠账补发
-    if (res && res.query && res.query.roomNo) {
+    // 好友点卡热启动：带 auto:true 直接发起加入，不再要求玩家手点一次「加入房间」。
+    // isConsumed 守卫：同一张卡在切后台后 onShow 仍会带同一份 query，已消费过就别再拽人进房。
+    if (res && res.query && res.query.roomNo && !share.isConsumed(res.query.roomNo)) {
       share.setLaunchQuery(res.query)
-      app.go('room', { mode: 'join' })
+      app.go('room', { mode: 'join', auto: true })
     }
   })
 }
@@ -142,7 +144,8 @@ if (wx.onShow) {
 /* ---------------- 启动 ---------------- */
 const launchQuery = share.launchQuery()
 app.go('lobby')                                   // 先垫一层，保证「返回」可用
-if (launchQuery.roomNo) app.go('room', { mode: 'join' })
+// 冷启动带邀请卡：auto:true 让房间页读入房间号后立刻 onJoin（见 room.js 的 join 分支）
+if (launchQuery.roomNo) app.go('room', { mode: 'join', auto: true })
 app.start()
 
 // 导出供自动化测试驱动（小游戏运行时不依赖它）

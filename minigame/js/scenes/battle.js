@@ -111,10 +111,14 @@ class Battle extends Scene {
     this.lastEmoteSeq = 0
     this.layout()
 
+    // 战局页被动转发也带房间号（若全局 match 里有）：好友点开可直接进这间房。
+    // 拿不到房间号就保持空 query，不硬造。
+    const inviteNo = match.roomNo || ''
+    const invitePwd = match.pwd || ''
     share.onShare(function () {
       return {
         title: '炸飞机 · 9×9 双人实时对战，来跟我打一局',
-        query: ''
+        query: share.roomQuery(inviteNo, invitePwd)
       }
     })
 

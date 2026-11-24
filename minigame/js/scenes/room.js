@@ -16,6 +16,7 @@ const {
   MIN_PLANES, MAX_PLANES, TIMEOUT, TURN_MIN, TURN_MAX, TURN_DEFAULT, ROOM_NAME_MAX
 } = require('../shared/config/rules')
 const { clampPlaneCount } = require('../shared/utils/room')
+const { AUDIO } = require('../core/audio')
 
 class Room extends Scene {
   constructor(app) {
@@ -613,6 +614,8 @@ class Room extends Scene {
     this.playerCount = data.matched ? 2 : 1
     this.mode = 'waiting'
     this.waitLeft = TIMEOUT.ROOM
+    // 进房音（规格 §2.3）：建房 / 加房 / 匹配成功三路都汇聚到此，一处挂即可。
+    app.audio.play(AUDIO.SFX.ROOM_ENTER)
     this.layout()
     this.startWatch()
     this.startCountdown()

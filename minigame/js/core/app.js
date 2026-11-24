@@ -10,6 +10,7 @@ const { hitZone } = require('./geom')
 const { createFx } = require('./fx')
 const draw = require('./draw')
 const theme = require('./theme')
+const { AUDIO } = require('./audio')
 
 // 小游戏环境有 rAF；Node 下测试时退化成 setTimeout
 const raf = (typeof requestAnimationFrame === 'function')
@@ -26,6 +27,15 @@ function createApp(opts) {
   const canvas = opts.canvas
   const factories = opts.scenes || {}
 
+  // 音频引擎由入口（game.js）注入，场景一律经 this.app.audio 访问，
+  // 便于测试替换成 spy / no-op。直接 createApp 而未注入时给空壳，保证零回归。
+  const noopAudio = {
+    play: function () {}, scene: function () {}, setSkin: function () {},
+    setMuted: function () {}, getMuted: function () { return false },
+    unlock: function () {}, suspend: function () {}, resume: function () {}, destroy: function () {}
+  }
+  const audio = opts.audio || noopAudio
+
   const cache = {}
   const overlay = { busy: '', toast: null, feedback: null }
 
@@ -36,6 +46,9 @@ function createApp(opts) {
 
     /** 动效时钟：全仓唯一的动效时间源（见 core/fx.js 开头的说明） */
     fx: createFx(),
+
+    /** 音频引擎（见 core/audio.js；场景统一走这里，不直接 require 单例） */
+    audio: audio,
 
     /** 设计稿单位 → px 的快捷方式 */
     u: function (v) { return layout.u(v) },
@@ -69,6 +82,7 @@ function createApp(opts) {
       this.stack.push(name)
       if (this.stack.length > 30) this.stack.shift()
       this.scene = next
+      audio.scene(name)
       if (next.onEnter) next.onEnter(params || {})
     },
 
@@ -79,6 +93,7 @@ function createApp(opts) {
       if (this.scene && this.scene !== next && this.scene.onExit) this.scene.onExit()
       this.stack.push(name)
       this.scene = next
+      audio.scene(name)
       if (next.onEnter) next.onEnter(params || {})
     },
 
@@ -90,6 +105,7 @@ function createApp(opts) {
       const next = this.get(name)
       if (this.scene && this.scene !== next && this.scene.onExit) this.scene.onExit()
       this.scene = next
+      audio.scene(name)
       if (next.onEnter) next.onEnter({})
     },
 
@@ -99,6 +115,7 @@ function createApp(opts) {
       if (this.scene && this.scene !== next && this.scene.onExit) this.scene.onExit()
       this.stack = [name]
       this.scene = next
+      audio.scene(name)
       if (next.onEnter) next.onEnter({})
     },
 
@@ -135,7 +152,11 @@ function createApp(opts) {
       // onTouchEnd 无论是否拖动都要通知（拖拽落位就靠它）
       if (s.onTouchEnd) s.onTouchEnd(x, y, t)
       // 拖动超过阈值不算点击：拖飞机 / 拖动列表都不会误触发 tap
-      if (!t.moved) s.tap(t.x, t.y)
+      // 命中 zone 才响通用点击音（base.js 的 tap 返回命中的 zone，点空白返回 null）
+      if (!t.moved) {
+        const hit = s.tap(t.x, t.y)
+        if (hit) audio.play(AUDIO.SFX.UI_TAP)
+      }
     },
 
     /* ---------------- 全局浮层 ---------------- */

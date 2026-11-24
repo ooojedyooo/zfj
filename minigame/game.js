@@ -10,6 +10,7 @@
 const { ENV_ID, USE_CLOUD } = require('./js/shared/config/cloud')
 const { createApp } = require('./js/core/app')
 const share = require('./js/core/share')
+const { createAudio } = require('./js/core/audio')
 
 /* ---------------- 画布 ---------------- */
 const canvas = wx.createCanvas()
@@ -51,11 +52,17 @@ const theme = require('./js/core/theme')
 const skinId = skin.getSkinId()
 theme.applySkin(skinId)
 
+/* ---------------- 音频（程序化合成，零资源；首个手势才解锁） ---------------- */
+// 皮肤在上面已 applySkin，音频创建时读得到当前音色参数。
+const audio = createAudio()
+audio.setSkin(skinId)
+
 /* ---------------- 应用与场景 ---------------- */
 const app = createApp({
   canvas: canvas,
   ctx: ctx,
   info: info,
+  audio: audio,
   scenes: {
     lobby: require('./js/scenes/lobby'),
     rooms: require('./js/scenes/rooms'),
@@ -80,6 +87,9 @@ function pointOf(e, useChanged) {
 }
 
 wx.onTouchStart(function (e) {
+  // 首个手势解锁音频：ctx.resume() + 一记 tap 作为「声音已开」的确认。
+  // unlock 内部有守卫，之后每次 touchStart 都是空操作（或仅在 suspended 时 resume）。
+  audio.unlock()
   const p = pointOf(e, false)
   if (p) app.touchStart(p.x, p.y)
 })
@@ -113,6 +123,7 @@ share.onShare(function () {
 if (wx.onHide) {
   wx.onHide(function () {
     app.stop()
+    audio.suspend()   // 后台挂起音频（非仅 gain=0，省电且避免后台出声）
   })
 }
 
@@ -120,6 +131,7 @@ if (wx.onHide) {
 if (wx.onShow) {
   wx.onShow(function (res) {
     app.start()            // 已在运行则是空操作（start 自带 _running 守卫）
+    audio.resume()         // 未静音时恢复；内部会重置氛围调度锚点，防后台欠账补发
     if (res && res.query && res.query.roomNo) {
       share.setLaunchQuery(res.query)
       app.go('room', { mode: 'join' })

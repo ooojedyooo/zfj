@@ -2552,6 +2552,155 @@ async function main() {
     app.go('lobby')
   })
 
+  /* ---------- 16. 程序化音频接入（spy，不改产品逻辑） ---------- */
+  section('[16] 程序化音频：三态映射 / T-08 / 逐秒 tick / no-op / 静音存储')
+
+  const audioMod = require('../minigame/js/core/audio')
+  const AU = audioMod.AUDIO
+  const SFX = AU.SFX
+
+  // -- 16a. 桩环境无 Web Audio：createAudio 必须是完整 no-op，任何调用都不抛 --
+  check('测试桩无 createWebAudioContext 时引擎降级为 no-op 且调用不抛', function () {
+    assert.strictEqual(typeof global.wx.createWebAudioContext, 'undefined',
+      '测试桩不应提供 Web Audio，否则本用例前提不成立')
+    const a = audioMod.createAudio()
+    assert.strictEqual(a.isNoop, true, '未降级为 no-op')
+    assert.doesNotThrow(function () {
+      a.play(SFX.FIRE); a.scene('battle'); a.setSkin('dusk')
+      a.setMuted(true); assert.strictEqual(a.getMuted(), false)
+      a.unlock(); a.suspend(); a.resume(); a.step(); a.destroy()
+    })
+  })
+
+  // -- 16b. 静音存储：键 audio.muted、bool 值（规格 §6；纯函数级，不依赖 ctx） --
+  check('静音常量契约为 audio.muted / SKIN 3 参数 / 16 事件', function () {
+    assert.strictEqual(AU.STORAGE_KEY_MUTED, 'audio.muted')
+    assert.deepStrictEqual(AU.SKIN.abyss, { WAVE: 'sine', LP_SCALE: 0.75, TAIL_SCALE: 0.70 })
+    assert.deepStrictEqual(AU.SKIN.dusk, { WAVE: 'triangle', LP_SCALE: 1.15, TAIL_SCALE: 1.30 })
+    assert.strictEqual(Object.keys(SFX).length, 16, '事件数不是 16')
+  })
+
+  // 注入 spy：替换 app.audio，记录 play(id)。结束后还原。
+  const realAudio = app.audio
+  const spyCalls = []
+  const spyAudio = {
+    play: function (id) { spyCalls.push(id) },
+    scene: function () {}, setSkin: function () {}, setMuted: function () {},
+    getMuted: function () { return false }, unlock: function () {},
+    suspend: function () {}, resume: function () {}, destroy: function () {}
+  }
+  app.audio = spyAudio
+
+  // 用可控的 api.fire stub 驱动 onFire，验证「三态映射 + 只在结果回来后响」
+  const realFire = cloudApi.fire
+  const battleForSpy = app.get('battle')
+  const savedFire = battleForSpy.firing
+  const savedSel = battleForSpy.selected
+  const savedTurn = battleForSpy.myTurn
+  const savedFinished = battleForSpy.finished
+  const savedOpenid = battleForSpy.myOpenid
+
+  const RESULT_MAP = [
+    [require('../minigame/js/shared/config/rules').RESULT.MISS, SFX.MISS],
+    [require('../minigame/js/shared/config/rules').RESULT.HIT, SFX.HIT],
+    [require('../minigame/js/shared/config/rules').RESULT.KILL, SFX.KILL]
+  ]
+  for (let i = 0; i < RESULT_MAP.length; i++) {
+    const serverResult = RESULT_MAP[i][0]
+    const expectSfx = RESULT_MAP[i][1]
+    let fired = false
+    cloudApi.fire = function () {
+      fired = true
+      return Promise.resolve({ result: serverResult })
+    }
+    spyCalls.length = 0
+    battleForSpy.firing = false
+    battleForSpy.selected = { row: 4, col: 4 }
+    battleForSpy.myTurn = true
+    battleForSpy.finished = false
+    battleForSpy.myOpenid = 'spy-me'
+    battleForSpy.onFire()
+    // onFire 同步发出开火音，结果音在 then 微任务里 —— 用 waitFor 等它
+    await waitFor(function () { return fired && spyCalls.length >= 2 }, '三态结果音回传')
+    check('res.result=' + serverResult + ' → 开火音 + 对应结果音（' + expectSfx + '）', function () {
+      assert.strictEqual(fired, true, 'api.fire 未被调用')
+      assert.ok(spyCalls.indexOf(SFX.FIRE) >= 0, '缺少开火音')
+      assert.ok(spyCalls.indexOf(expectSfx) >= 0, '缺少结果音 ' + expectSfx)
+      assert.strictEqual(spyCalls.length, 2, '一炮只应响一记开火 + 一记结果，实际 ' + JSON.stringify(spyCalls))
+    })
+  }
+  cloudApi.fire = realFire
+  battleForSpy.firing = savedFire
+  battleForSpy.selected = savedSel
+  battleForSpy.myTurn = savedTurn
+  battleForSpy.finished = savedFinished
+  battleForSpy.myOpenid = savedOpenid
+
+  // -- 16c. T-08：applyBattle 收到 incoming / 对方 marks 时不播任何结果音 --
+  check('T-08：对方打我的 incoming 数据不触发 miss/hit/kill 结果音', function () {
+    spyCalls.length = 0
+    const b = app.get('battle')
+    const saved = b.lastBattle
+    const RESULT = require('../minigame/js/shared/config/rules').RESULT
+    // incoming[我] 是打到我盘上的炮（含 hit/kill），对手 marks 也在 —— 音频层都不许碰
+    b.applyBattle({
+      turn: 'foe-openid',
+      marks: { 'spy-me': { '1,1': RESULT.KILL } },
+      incoming: { 'spy-me': { '2,2': RESULT.HIT, '3,3': RESULT.KILL } },
+      stats: { 'spy-me': { kill: 0, lost: 2, shots: 0 } },
+      turnDeadline: Date.now() + 20000,
+      counts: {}, streak: {}
+    })
+    const resultIds = [SFX.MISS, SFX.HIT, SFX.KILL]
+    const leaked = spyCalls.filter(function (id) { return resultIds.indexOf(id) >= 0 })
+    assert.strictEqual(leaked.length, 0, 'T-08 违规：applyBattle 触发了结果音 ' + JSON.stringify(leaked))
+    b.lastBattle = saved
+  })
+
+  // -- 16d. 逐秒 tick：只在 update 的秒变化点触发一次，不随每帧重复 --
+  check('逐秒 tick 只在秒数递减时响一次；>5s 用 tick，≤5s 用 urgent', function () {
+    // check 是同步的，这里用同步驱动 update 的方式，避免每帧 rAF 干扰
+    const b = app.get('battle')
+    const savedLast = b.lastBattle
+    const savedTurnS = b.turnSeconds
+    const savedMyTurn = b.myTurn
+    const savedFinished = b.finished
+    const savedAcc = b.tickAcc
+    b.myTurn = true
+    b.finished = false
+    b.tickAcc = 0
+    const now = Date.now()
+
+    // 剩余 9 秒 → 跨到 8 秒：应响一记普通 tick
+    // 注意 left = ceil((deadline-now)/1000)，now+7600 → ceil(7.6)=8 < 9，才是「递减」
+    spyCalls.length = 0
+    b.turnSeconds = 9
+    b.lastBattle = { turnDeadline: now + 7600 }
+    b.update(300)   // 越过 250ms 累加器阈值
+    assert.ok(spyCalls.indexOf(SFX.TICK) >= 0, '>5s 未响普通 tick：' + JSON.stringify(spyCalls))
+
+    // 同一秒内再跑多帧：不应重复响
+    const afterFirst = spyCalls.length
+    b.update(300); b.update(300)
+    assert.strictEqual(spyCalls.length, afterFirst, '同一秒内重复响了 tick')
+
+    // 剩余 5 秒 → 跨到 4 秒：应响一记 urgent（ceil(3.6)=4 < 5）
+    spyCalls.length = 0
+    b.turnSeconds = 5
+    b.lastBattle = { turnDeadline: now + 3600 }
+    b.tickAcc = 250
+    b.update(300)
+    assert.ok(spyCalls.indexOf(SFX.TICK_URGENT) >= 0, '≤5s 未响 urgent：' + JSON.stringify(spyCalls))
+
+    b.lastBattle = savedLast
+    b.turnSeconds = savedTurnS
+    b.myTurn = savedMyTurn
+    b.finished = savedFinished
+    b.tickAcc = savedAcc
+  })
+
+  app.audio = realAudio
+
   /* ---------- 收尾 ---------- */
   app.stop()
   offline._reset()

@@ -15,11 +15,19 @@ const { createMatrix } = require('../shared/utils/board')
 const { getAbsoluteCells } = require('../shared/utils/plane')
 const { RESULT, BOARD_SIZE, TIMEOUT, MAX_TURN_TIMEOUT_STREAK } = require('../shared/config/rules')
 const { EMOTES, EMOTE_HIDE_MS } = require('../shared/config/social')
+const { AUDIO } = require('../core/audio')
 
 const RESULT_TEXT = {}
 RESULT_TEXT[RESULT.MISS] = '未击中'
 RESULT_TEXT[RESULT.HIT] = '击中！'
 RESULT_TEXT[RESULT.KILL] = '击毁！'
+
+// T-08：结果音唯一数据源是我方 api.fire 返回的 res.result（见 onFire）。
+// 机翼/机身/机尾服务端都回 hit → 同一个 sfx.hit，无部位变体；不接 incoming / 对方 marks。
+const RESULT_SFX = {}
+RESULT_SFX[RESULT.MISS] = AUDIO.SFX.MISS
+RESULT_SFX[RESULT.HIT] = AUDIO.SFX.HIT
+RESULT_SFX[RESULT.KILL] = AUDIO.SFX.KILL
 
 // 等待态战报（§11.1.A 中档）。只说「我打过哪里、结果如何」：
 // 没有机号、没有机头/机翼字样、没有来自 incoming 的数据 —— T-08 禁的就是这个。
@@ -142,7 +150,17 @@ class Battle extends Scene {
     this.tickAcc = 0
 
     const left = Math.max(0, Math.ceil((this.lastBattle.turnDeadline - Date.now()) / 1000))
-    if (left !== this.turnSeconds) this.turnSeconds = left
+    if (left !== this.turnSeconds) {
+      const wasTurn = this.turnSeconds
+      this.turnSeconds = left
+      // 逐秒 tick 音：只挂这个「秒变化点」，绝不挂 render（那是每帧，会重复响）。
+      // 250ms 累加器天然防抖；只在本人回合、未结束、倒计时递减时响。
+      // 规格 §2.13：>5s 每跨一秒响 sfx.tick；§2.14：≤5s 改响 sfx.tick.urgent。
+      // wasTurn > left 保证只认「递减」，避免异常回增再减导致重复响。
+      if (this.myTurn && !this.finished && left > 0 && wasTurn > left) {
+        this.app.audio.play(left <= 5 ? AUDIO.SFX.TICK_URGENT : AUDIO.SFX.TICK)
+      }
+    }
     if (left <= 0) this.requestTick()
   }
 
@@ -278,6 +296,11 @@ class Battle extends Scene {
     this.wasReportSlot = reportSlot
     let needLayout = focusChanged || (this.wasTurn !== myTurn) || (this.wasFinished !== finished)
     if (reportSlotChanged) needLayout = true
+    // 「轮到你了」提示音（规格 §2.8）：仅在明确由对方回合翻转到我方回合时响一次。
+    // wasTurn 未定义（首次同步）不响，避免与进房音叠加 / 无法区分重连。
+    if (myTurn && this.wasTurn === false && !finished) {
+      this.app.audio.play(AUDIO.SFX.ROUND_START)
+    }
     this.wasTurn = myTurn
     this.wasFinished = finished
     if (needLayout) this.layout()
@@ -805,10 +828,16 @@ class Battle extends Scene {
     const app = this.app
     const sel = this.selected
     this.firing = true
+    // 开火音：玩家点下、炮弹出膛时响一次（T17/规格 §2.9）。
+    // 与通用 tap 音的叠加由 audio.js 的 tap↔fire 60ms 去抖吞掉。
+    app.audio.play(AUDIO.SFX.FIRE)
     api.fire({ roomId: this.roomId, row: sel.row, col: sel.col }).then(function (res) {
       self.firing = false
       self.selected = null
       self.layout()
+      // 结果音：唯一数据源是我方这一炮的服务端返回 res.result（T-08）。
+      // 必须在结果回来后响，绝不提前；catch 分支不播结果音。
+      if (RESULT_SFX[res.result]) app.audio.play(RESULT_SFX[res.result])
       app.feedback(RESULT_TEXT[res.result] || '', 900)
     }).catch(function (e) {
       self.firing = false

@@ -23,6 +23,7 @@ const api = require('../shared/services/cloudApi')
 const rivals = require('../shared/services/rivals')
 const aiTune = require('../shared/services/aiTune')
 const { MIN_PLANES, MAX_PLANES } = require('../shared/config/rules')
+const { AUDIO } = require('../core/audio')
 
 /**
  * 三张匹配卡里的飞机阵 —— 画几架，就是几架的局。
@@ -151,6 +152,12 @@ class Lobby extends Scene {
     g.skinBtn = { x: L.W - x - skinW, y: g.subY - skinH / 2, w: skinW, h: skinH }
     this.zone(g.skinBtn.x, g.skinBtn.y, skinW, skinH, this.onSkin.bind(this))
 
+    // 静音入口：与皮肤按钮同一行，贴在它左侧，不占新的一行（320 屏已无余量）。
+    // 纯 Canvas 自绘 + zone（项目铁律：不建原生覆盖按钮）。尺寸与 skinBtn 同高。
+    const muteW = u(96)
+    g.muteBtn = { x: g.skinBtn.x - u(16) - muteW, y: g.skinBtn.y, w: muteW, h: skinH }
+    this.zone(g.muteBtn.x, g.muteBtn.y, muteW, skinH, this.onToggleMute.bind(this))
+
     let y = g.subY + gIntro + extraTop * 0.5
 
     if (!api.isCloud) {
@@ -258,6 +265,24 @@ class Lobby extends Scene {
         size: u(theme.size.tiny), color: c.textMuted, align: 'center'
       })
 
+    // 静音入口：几何喇叭 + 中文「音效 开/关」，跟随皮肤 token，与皮肤按钮同一行同高。
+    // 关态用 danger 语义色 + 一道斜杠，开态用主色 —— 状态一眼可读。
+    // 按钮很窄（320 屏约 41px），放不下「喇叭图形 + 音效 + 开/关」三样。
+    // 用两行居中文字表达：上行状态单字（响/静，颜色区分），下行「音效」标签。
+    const mb = g.muteBtn
+    const muted = this.app.audio.getMuted && this.app.audio.getMuted()
+    draw.fillRect(ctx, mb.x, mb.y, mb.w, mb.h, c.panel, srad)
+    draw.strokeRect(ctx, mb.x, mb.y, mb.w, mb.h, muted ? c.danger : c.borderHi, srad, 1)
+    const cx = mb.x + mb.w / 2
+    const cy = mb.y + mb.h / 2
+    const ink = muted ? c.danger : c.primary
+    draw.text(ctx, muted ? '静' : '响', cx, cy - u(6), {
+      size: u(theme.size.small), color: ink, align: 'center', weight: 500
+    })
+    draw.text(ctx, '音效', cx, cy + u(14), {
+      size: u(theme.size.tiny), color: c.textFaint, align: 'center'
+    })
+
     if (g.tipY != null) {
       // 右侧显示当前强度等级：不用点进去也知道现在对面有多难
       ui.modeTip(ctx, L, g.x, g.tipY, g.w, '离线试玩 · 对手是本地 AI', {
@@ -350,6 +375,10 @@ class Lobby extends Scene {
     const i = skin.ALLOWED.indexOf(cur)
     const next = skin.ALLOWED[(i + 1) % skin.ALLOWED.length]
     const applied = theme.applySkin(next)
+    // 音色切换 + 换肤音：紧跟 applySkin 之后（T17 裁决，不挂 skin.js 写存储处）。
+    // 先切音色再播，让这声「焕新」本身就用上新皮肤的音色。
+    this.app.audio.setSkin(applied)
+    this.app.audio.play(AUDIO.SFX.SKIN)
     const saved = skin.setSkinId(applied)
     this.app.globalData.skinId = applied
     this.layout()
@@ -360,6 +389,21 @@ class Lobby extends Scene {
         content: '当前环境无法保存皮肤设置，本次切换只在当前页面生效'
       })
     }
+  }
+
+  /**
+   * 静音开关（规格 §6）：纯本地、Canvas 自绘按钮，audio.muted 由 audio 模块读写。
+   * 切换播 tap 作为听觉确认：开→关先播再静音（最后一声），关→开先解除再播（第一声）。
+   * 同一帧内 layout + renderOnce，不出现半帧旧态（沿用 onSkin 的顺序约定）。
+   */
+  onToggleMute() {
+    const audio = this.app.audio
+    const wasMuted = audio.getMuted && audio.getMuted()
+    if (!wasMuted) audio.play(AUDIO.SFX.UI_TAP)   // 开→关：最后一声确认
+    audio.setMuted(!wasMuted)
+    if (wasMuted) audio.play(AUDIO.SFX.UI_TAP)    // 关→开：解锁后第一声
+    this.layout()
+    this.app.renderOnce()
   }
 
   /** 再邀最近对手：建房并带到房间页，由用户点「邀请好友」分享 */

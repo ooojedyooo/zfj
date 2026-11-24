@@ -81,6 +81,7 @@ const { getAbsoluteCells, randomDeploy } = require('../shared/utils/plane')
 const { createMatrix } = require('../shared/utils/board')
 const { BOARD_SIZE, MIN_PLANES, TIMEOUT } = require('../shared/config/rules')
 const { clampPlaneCount } = require('../shared/utils/room')
+const { AUDIO } = require('../core/audio')
 
 const ROTATION_LABEL = ['↑', '→', '↓', '←']
 
@@ -953,6 +954,8 @@ class Deploy extends Scene {
     this.layout()              // 槽位状态变了，重排一次
 
     const text = this.issueTextOf(slot)
+    // 落位音：合法=place，非法（标红）=invalid（规格 §2.4/2.6，T17 挂点）
+    this.app.audio.play(text ? AUDIO.SFX.DEPLOY_INVALID : AUDIO.SFX.DEPLOY_PLACE)
     if (text) this.app.toast('第 ' + (slot + 1) + ' 架放不下 · 已标红')
   }
 
@@ -1148,6 +1151,7 @@ class Deploy extends Scene {
     this.rotation = next   // 下一架沿用当前朝向，连放多架同一方向更省事
 
     const text = this.issueTextOf(idx)
+    this.app.audio.play(AUDIO.SFX.DEPLOY_ROTATE)   // 旋转音（规格 §2.5）
     this.app.toast('第 ' + (idx + 1) + ' 架朝向 ' + ROTATION_LABEL[next] + (text ? ' · 已标红' : ''))
     return true
   }
@@ -1166,6 +1170,7 @@ class Deploy extends Scene {
     }
     if (last < 0) {
       this.rotation = (this.rotation + 1) % 4
+      this.app.audio.play(AUDIO.SFX.DEPLOY_ROTATE)   // 无飞机时切待放朝向也响旋转音
       this.app.toast('下一架朝向：' + ROTATION_LABEL[this.rotation])
       return
     }
@@ -1182,6 +1187,7 @@ class Deploy extends Scene {
     this.selected = -1
     this.drag = null
     this.layout()
+    this.app.audio.play(AUDIO.SFX.DEPLOY_ROTATE)   // 收起：机械感轻音
     const left = this.activeCount()
     this.app.toast(left >= this.slotCount
       ? '第 ' + n + ' 架已收起 · 点虚线槽可放回'
@@ -1196,6 +1202,7 @@ class Deploy extends Scene {
     this.selected = idx
     this.rotation = p.rotation
     this.layout()
+    this.app.audio.play(AUDIO.SFX.DEPLOY_PLACE)   // 展开回原位：落位音
     const n = this.activeCount()
     const text = this.issueTextOf(idx)
     this.app.toast('第 ' + (idx + 1) + ' 架已放回原位 · ' + n + '/' + this.slotCount + ' 架' +
@@ -1272,6 +1279,7 @@ class Deploy extends Scene {
     this.selected = -1
     this.drag = null
     this.layout()
+    this.app.audio.play(AUDIO.SFX.DEPLOY)   // 整队音（规格 §2.7）
     this.app.toast('已随机布置 ' + this.activeCount() + ' 架')
   }
 
@@ -1282,6 +1290,7 @@ class Deploy extends Scene {
     this.selected = -1
     this.drag = null
     this.layout()
+    this.app.audio.play(AUDIO.SFX.DEPLOY_ROTATE)   // 清空：机械感轻音
     this.app.toast('已清空 · 点棋盘放 ' + this.slotCount + ' 架')
   }
 
@@ -1443,6 +1452,7 @@ class Deploy extends Scene {
 
     const left = this.audit().items.length
     if (left === 0) {
+      if (fixed) this.app.audio.play(AUDIO.SFX.DEPLOY)   // 自动整理成功：整队音
       this.app.toast(fixed ? '已整理 ' + fixed + ' 架 · 可以就绪了' : '已经没问题了')
       return
     }
@@ -1462,6 +1472,7 @@ class Deploy extends Scene {
     this.selected = -1
     this.drag = null
     this.layout()
+    app.audio.play(AUDIO.SFX.DEPLOY)   // 确认布阵音（规格 §2.7，点「就绪」时）
 
     // 只提交在场上的（onReady 已核对过数量与位置，这里再收一道，别把收起的架当布置）
     const planes = this.activePlaced().map(function (p) {

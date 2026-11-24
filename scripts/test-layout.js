@@ -101,6 +101,20 @@ DEVICES.forEach(function (d) {
     })
     if (zone.length !== 1) errs.push('皮肤入口没有唯一可点区域（找到 ' + zone.length + ' 个）')
   }
+  // 静音入口：与皮肤按钮同一行左侧，不占新行；尺寸够点、不侵占主入口、zone 唯一
+  inside(lobby.geo.muteBtn, W, H, '静音入口', errs)
+  const mb = lobby.geo.muteBtn
+  if (mb && mb.h < 24) errs.push('静音入口触控高度不足 ' + Math.round(mb.h))
+  if (mb) {
+    overlap(mb, sb, '静音入口', '皮肤入口', errs)
+    overlap(mb, lobby.geo.matchCards[0], '静音入口', '匹配卡', errs)
+    overlap(mb, lobby.geo.createBtn, '静音入口', '创建按钮', errs)
+    const mzone = lobby.zones.filter(function (z) {
+      return Math.abs(z.x - mb.x) < 0.5 && Math.abs(z.y - mb.y) < 0.5 &&
+        Math.abs(z.w - mb.w) < 0.5 && Math.abs(z.h - mb.h) < 0.5
+    })
+    if (mzone.length !== 1) errs.push('静音入口没有唯一可点区域（找到 ' + mzone.length + ' 个）')
+  }
   overlap(lobby.geo.createBtn, lobby.geo.browseBtn, '创建按钮', '浏览按钮', errs)
   overlap(lobby.geo.browseBtn, lobby.geo.searchBtn, '浏览按钮', '搜索按钮', errs)
   // 匹配卡不能压到下面的入口按钮

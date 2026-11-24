@@ -10,6 +10,7 @@ const share = require('../core/share')
 const api = require('../shared/services/cloudApi')
 const rivals = require('../shared/services/rivals')
 const { END_TYPE, MAX_TURN_TIMEOUT_STREAK } = require('../shared/config/rules')
+const { AUDIO } = require('../core/audio')
 
 const END_TEXT = {}
 END_TEXT[END_TYPE.ALL_DESTROYED] = '击毁对方全部飞机'
@@ -35,6 +36,8 @@ class Result extends Scene {
     this.planeCount = r.planeCount || 1
     this.foePlaneCount = r.foePlaneCount || 0
     this.win = !!r.win
+    // 胜负音：权威判定在 matchResult.win（T17 挂点），只在这里响一次。
+    this.app.audio.play(this.win ? AUDIO.SFX.WIN : AUDIO.SFX.LOSE)
     this.endType = r.endType || ''
     this.roomId = r.roomId || ''
     this.myShots = r.myShots || 0

@@ -2580,6 +2580,14 @@ async function main() {
     assert.strictEqual(Object.keys(SFX).length, 16, '事件数不是 16')
   })
 
+  // -- 16b2. v1.1 常量拆分 + 氛围退出开关 --
+  check('v1.1：去抖拆两个常量、AMB_ENABLE 氛围总开关存在', function () {
+    assert.strictEqual(AU.SAME_ID_DEBOUNCE_MS, 40, '同 ID 去抖常量缺失')
+    assert.strictEqual(AU.TAP_FIRE_DEDUP_MS, 60, '跨事件 tap↔fire 常量缺失')
+    assert.strictEqual(AU.DEBOUNCE_MS, undefined, '旧常量 DEBOUNCE_MS 应已改名')
+    assert.strictEqual(typeof AU.AMB_ENABLE, 'boolean', 'AMB_ENABLE 布尔开关缺失')
+  })
+
   // 注入 spy：替换 app.audio，记录 play(id)。结束后还原。
   const realAudio = app.audio
   const spyCalls = []

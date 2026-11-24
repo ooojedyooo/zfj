@@ -23,9 +23,11 @@ const AUDIO = {
   BUS_SFX_GAIN: 1.0,
   BUS_AMB_GAIN: 0.03,          // duck 时 0.012，60ms 降 / 500ms 保持 / 800ms 回
   VOICES_MAX: 6,
-  DEBOUNCE_MS: 40,
+  SAME_ID_DEBOUNCE_MS: 40,     // 同事件连点去抖（v1.1：原 DEBOUNCE_MS 改名）
+  TAP_FIRE_DEDUP_MS: 60,       // 跨事件：ui.tap 与 fire 同一次点击撞车时吞掉 tap
   NOISE_BUFFER_SEC: 0.5,       // 运行时生成，约 88 KB
   STORAGE_KEY_MUTED: 'audio.muted',
+  AMB_ENABLE: true,            // 真机若判定氛围弊大于利，只翻这个布尔即完全关闭 BGM
   SKIN: {
     abyss: { WAVE: 'sine', LP_SCALE: 0.75, TAIL_SCALE: 0.70 },
     dusk: { WAVE: 'triangle', LP_SCALE: 1.15, TAIL_SCALE: 1.30 }
@@ -68,9 +70,10 @@ const R = {}
 const S = AUDIO.SFX
 
 // 2.1 sfx.ui.tap —— 波形 + 尾长跟随；频率/滤波/增益恒定
+// v1.1：880→587（纯五度下坠，880/1.5），A 从 2 提到 4（不被去重截掉起始瞬态）
 R[S.UI_TAP] = {
   gain: 0.30, voices: [
-    { k: 'osc', wave: 'theme', sw: true, f0: 880, f1: 620, slide: 30, dur: 38, atk: 2, lp: 4000, gain: 1 }
+    { k: 'osc', wave: 'theme', sw: true, f0: 880, f1: 587, slide: 30, dur: 38, atk: 4, lp: 4000, gain: 1 }
   ]
 }
 // 2.2 sfx.skin —— 尾长跟随；音高 / 五度关系恒定
@@ -295,6 +298,9 @@ function createAudio() {
 
   /** 两套常开 drone：osc → lp → breath(LFO ±20%) → sceneGain(交叉淡入) → busAmb */
   function buildDrones() {
+    // v1.1 §5.1 退出路径：翻 AMB_ENABLE=false 即完全不建氛围声部，退回纯静音，
+    // 不动任何 sfx 事件代码。sfx 事件走 busSfx，与此无关。
+    if (!AUDIO.AMB_ENABLE) return
     function one(f1, f2, lpHz) {
       if (typeof ctx.createOscillator !== 'function' || typeof ctx.createBiquadFilter !== 'function') return null
       const lp = ctx.createBiquadFilter()
@@ -462,7 +468,7 @@ function createAudio() {
     if (!recipe) return
     const now = ctx.currentTime * 1000
     // 同 ID 去抖 40ms
-    if (now - (lastAt[id] || -1e9) < AUDIO.DEBOUNCE_MS) return
+    if (now - (lastAt[id] || -1e9) < AUDIO.SAME_ID_DEBOUNCE_MS) return
     lastAt[id] = now
 
     // §4.2 击毁盖过命中：100ms 窗口内 hit 与 kill 都到 → 只播 kill
@@ -473,7 +479,7 @@ function createAudio() {
     if (!makeRoom(priority)) return
 
     // 跨事件 tap↔fire 60ms：fire 触发时把刚播的 tap 快速淡出（v1.1 裁决）
-    if (id === S.FIRE && now - lastTapAt < 60 && lastTapVoices.length) {
+    if (id === S.FIRE && now - lastTapAt < AUDIO.TAP_FIRE_DEDUP_MS && lastTapVoices.length) {
       lastTapVoices.forEach(function (v) { v.stop(25) })
       lastTapVoices = []
     }
@@ -515,6 +521,7 @@ function createAudio() {
   }
 
   function schedule() {
+    if (!AUDIO.AMB_ENABLE) return
     if (!ctx || muted || !unlocked || ctx.state !== 'running') return
     const now = ctx.currentTime
     const horizon = now + 0.4
